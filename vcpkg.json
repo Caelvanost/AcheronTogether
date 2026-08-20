@@ -1,0 +1,7 @@
+{
+  "name": "acherontogether",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "commonlibsse-ng-flatrim"
+  ]
+}
