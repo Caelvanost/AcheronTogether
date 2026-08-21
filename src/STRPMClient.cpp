@@ -7,7 +7,20 @@ namespace AcheronTogether
     {
         constexpr wchar_t kModuleName[] = L"STRPluginMessagingAPI.dll";
         constexpr char kChannel[] = "acherontogether";
-        constexpr std::string_view kPrefix = "AT1|";
+        constexpr std::string_view kPrefixV2 = "AT2|";
+        constexpr std::string_view kPrefixV1 = "AT1|";
+
+        bool ParseUnsigned(std::string_view text, std::uint64_t& value)
+        {
+            const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+            return result.ec == std::errc{} && result.ptr == text.data() + text.size();
+        }
+
+        bool ParseUnsigned(std::string_view text, unsigned& value)
+        {
+            const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+            return result.ec == std::errc{} && result.ptr == text.data() + text.size();
+        }
     }
 
     STRPMClient& STRPMClient::GetSingleton()
@@ -103,7 +116,7 @@ namespace AcheronTogether
 
         _running.store(true);
         SKSE::log::info(
-            "ACHNET STRPM READY channel={} apiVersion={} proxyResolver={} resolverListener={}",
+            "ACHNET STRPM READY channel={} apiVersion={} proxyResolver={} resolverListener={} wire=AT2",
             kChannel,
             _api->version,
             _resolver ? 1 : 0,
@@ -133,17 +146,18 @@ namespace AcheronTogether
         SKSE::log::info("ACHNET STRPM stopped");
     }
 
-    bool STRPMClient::SendState(AcheronState state, std::uint64_t revision)
+    bool STRPMClient::SendState(const PlayerState& state, std::uint64_t revision)
     {
         if (!_running.load() || !_api || !_api->send) {
             return false;
         }
 
         const auto payload = fmt::format(
-            "{}{}|{}",
-            kPrefix,
+            "{}{}|{}|{}",
+            kPrefixV2,
             revision,
-            static_cast<unsigned>(state));
+            static_cast<unsigned>(state.acheron),
+            state.dead ? 1 : 0);
 
         STRPMApi::Target target{};
         target.kind = STRPMApi::TargetKind::kAllPlayers;
@@ -191,30 +205,61 @@ namespace AcheronTogether
         }
 
         const std::string payload(static_cast<const char*>(message.data), message.size);
-        if (!payload.starts_with(kPrefix)) {
-            return;
-        }
-
-        const auto first = payload.find('|', kPrefix.size());
-        if (first == std::string::npos) {
-            return;
-        }
-
+        PlayerState state{};
         std::uint64_t revision = 0;
-        unsigned stateValue = 0;
-        const auto revisionText = std::string_view(payload).substr(kPrefix.size(), first - kPrefix.size());
-        const auto stateText = std::string_view(payload).substr(first + 1);
 
-        const auto revisionResult = std::from_chars(revisionText.data(), revisionText.data() + revisionText.size(), revision);
-        const auto stateResult = std::from_chars(stateText.data(), stateText.data() + stateText.size(), stateValue);
-        if (revisionResult.ec != std::errc{} || stateResult.ec != std::errc{} || stateValue > 2) {
-            SKSE::log::warn("ACHNET RX malformed payload={}", payload);
+        if (payload.starts_with(kPrefixV2)) {
+            const auto first = payload.find('|', kPrefixV2.size());
+            const auto second = first == std::string::npos ? std::string::npos : payload.find('|', first + 1);
+            if (first == std::string::npos || second == std::string::npos) {
+                SKSE::log::warn("ACHNET RX malformed AT2 payload={}", payload);
+                return;
+            }
+
+            unsigned stateValue = 0;
+            unsigned deadValue = 0;
+            const auto view = std::string_view(payload);
+            const auto revisionText = view.substr(kPrefixV2.size(), first - kPrefixV2.size());
+            const auto stateText = view.substr(first + 1, second - first - 1);
+            const auto deadText = view.substr(second + 1);
+
+            if (!ParseUnsigned(revisionText, revision) ||
+                !ParseUnsigned(stateText, stateValue) ||
+                !ParseUnsigned(deadText, deadValue) ||
+                stateValue > 2 || deadValue > 1) {
+                SKSE::log::warn("ACHNET RX malformed AT2 payload={}", payload);
+                return;
+            }
+
+            state.acheron = static_cast<AcheronState>(stateValue);
+            state.dead = deadValue != 0;
+        } else if (payload.starts_with(kPrefixV1)) {
+            const auto first = payload.find('|', kPrefixV1.size());
+            if (first == std::string::npos) {
+                return;
+            }
+
+            unsigned stateValue = 0;
+            const auto view = std::string_view(payload);
+            const auto revisionText = view.substr(kPrefixV1.size(), first - kPrefixV1.size());
+            const auto stateText = view.substr(first + 1);
+            if (!ParseUnsigned(revisionText, revision) || !ParseUnsigned(stateText, stateValue) || stateValue > 2) {
+                return;
+            }
+
+            state.acheron = static_cast<AcheronState>(stateValue);
+            state.dead = false;
+        } else {
             return;
         }
 
         const auto connectionID = message.sender.connectionID;
-        const auto state = static_cast<AcheronState>(stateValue);
-        SKSE::log::trace("ACHNET RX connection={} rev={} state={}", connectionID, revision, stateValue);
+        SKSE::log::trace(
+            "ACHNET RX connection={} rev={} acheron={} dead={}",
+            connectionID,
+            revision,
+            static_cast<unsigned>(state.acheron),
+            state.dead ? 1 : 0);
 
         if (auto* tasks = SKSE::GetTaskInterface()) {
             tasks->AddTask([this, connectionID, state, revision]() {
