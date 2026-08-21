@@ -51,8 +51,6 @@ namespace AcheronTogether
             return false;
         }
 
-        acheron.SetConsequenceDisabled(true);
-
         _running.store(true);
         _worker = std::jthread([this](std::stop_token stopToken) {
             while (!stopToken.stop_requested() && _running.load()) {
@@ -97,6 +95,7 @@ namespace AcheronTogether
 
     void StateSync::ResetSession()
     {
+        AcheronBridge::GetSingleton().SetConsequenceDisabled(false);
         _remoteStates.clear();
         _checkpointMarker = {};
         _haveLocalState = false;
@@ -186,6 +185,7 @@ namespace AcheronTogether
         PlayerState state,
         std::uint64_t revision)
     {
+        const bool firstRemote = _remoteStates.empty();
         auto& remote = _remoteStates[connectionID];
         if (revision < remote.revision) {
             SKSE::log::trace(
@@ -194,6 +194,10 @@ namespace AcheronTogether
                 revision,
                 remote.revision);
             return;
+        }
+
+        if (firstRemote) {
+            AcheronBridge::GetSingleton().SetConsequenceDisabled(true);
         }
 
         remote.state = state;
@@ -206,6 +210,7 @@ namespace AcheronTogether
         switch (event.type) {
         case STRPMApi::ProxyMappingEventType::kAdded:
         case STRPMApi::ProxyMappingEventType::kUpdated:
+            AcheronBridge::GetSingleton().SetConsequenceDisabled(true);
             SKSE::log::info(
                 "ACHNET PROXY connection={} form={:08X}",
                 event.connectionID,
@@ -216,11 +221,15 @@ namespace AcheronTogether
 
         case STRPMApi::ProxyMappingEventType::kRemoved:
             _remoteStates.erase(event.connectionID);
+            if (_remoteStates.empty()) {
+                AcheronBridge::GetSingleton().SetConsequenceDisabled(false);
+            }
             SKSE::log::info("ACHNET PROXY removed connection={}", event.connectionID);
             break;
 
         case STRPMApi::ProxyMappingEventType::kCleared:
             _remoteStates.clear();
+            AcheronBridge::GetSingleton().SetConsequenceDisabled(false);
             SKSE::log::info("ACHNET PROXY mappings cleared");
             break;
 
