@@ -101,6 +101,17 @@ namespace AcheronTogether
         return true;
     }
 
+    bool AcheronBridge::SetConsequenceDisabled(bool disabled) const
+    {
+        if (!DispatchStatic("DisableConsequence", disabled)) {
+            SKSE::log::warn("Acheron bridge: failed to dispatch Acheron.DisableConsequence({})", disabled ? 1 : 0);
+            return false;
+        }
+
+        SKSE::log::info("Acheron consequences {} for multiplayer session", disabled ? "disabled" : "restored");
+        return true;
+    }
+
     bool AcheronBridge::ApplyState(RE::Actor* actor, AcheronState state) const
     {
         if (!IsReady() || !actor) {
