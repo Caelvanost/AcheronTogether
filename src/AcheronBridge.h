@@ -9,6 +9,19 @@ namespace AcheronTogether
         kDefeated = 2
     };
 
+    struct PlayerState
+    {
+        AcheronState acheron{ AcheronState::kNormal };
+        bool dead{ false };
+
+        [[nodiscard]] bool IsIncapacitated() const noexcept
+        {
+            return dead || acheron == AcheronState::kDefeated;
+        }
+
+        bool operator==(const PlayerState&) const = default;
+    };
+
     class AcheronBridge
     {
     public:
@@ -18,6 +31,7 @@ namespace AcheronTogether
         [[nodiscard]] bool IsReady() const noexcept;
         [[nodiscard]] AcheronState ReadState(RE::Actor* actor) const;
         bool ApplyState(RE::Actor* actor, AcheronState state) const;
+        bool SetConsequenceDisabled(bool disabled) const;
 
     private:
         bool DispatchActorCall(const char* functionName, RE::Actor* actor) const;
