@@ -1,25 +1,71 @@
 # Acheron Together
 
-Acheron Together is an experimental compatibility plugin that synchronizes Acheron defeat state between players in Skyrim Together Reborn.
+Acheron Together is an experimental SKSE/CommonLibSSE-NG plugin that turns Acheron into a multiplayer defeat/death layer for Skyrim Together Reborn.
 
-Current development version: **v0.1.0**.
+Current development version: **v0.2.0**.
 
-## v0.1.0 scope
+## v0.2.0 scope
 
-The first milestone synchronizes the local player's Acheron state to the corresponding STR remote-player proxy on the other client.
+v0.2.0 keeps the v0.1.0 Acheron proxy-state synchronization and adds the first multiplayer respawn framework:
 
-States currently mirrored:
+- synchronized Acheron `normal`, `pacified` and `defeated` states;
+- synchronized true Skyrim `dead` state;
+- local runtime checkpoints;
+- controlled respawn after a true death, including lethal killmoves that bypass Acheron;
+- multiplayer party-wipe detection;
+- coordinated local recovery/respawn when every known STR player is incapacitated;
+- Acheron consequence suppression while the STR multiplayer runtime is active.
 
-- normal / rescued
-- pacified
-- defeated
+A player is considered **incapacitated** when they are either Acheron `Defeated` or truly `Dead`.
 
-The plugin intentionally synchronizes only player state. Consequence quests, teleport/resolution selection, inventory transfer, Hunter Pride actions and other Acheron systems are not synchronized yet.
+## Intended gameplay
+
+### One player is defeated
+
+```text
+Player 1 = Defeated
+Player 2 = Alive
+        ↓
+No respawn
+        ↓
+Player 2 can remain active / rescue Player 1
+```
+
+### A player suffers a lethal killmove
+
+```text
+Killmove / true Skyrim death
+        ↓
+AT2 dead state is published
+        ↓
+short killmove/death grace period
+        ↓
+local resurrection
+        ↓
+return to local checkpoint
+```
+
+### Party wipe
+
+```text
+Player 1 = Defeated or Dead
+Player 2 = Defeated or Dead
+        ↓
+all known players incapacitated
+        ↓
+party-wipe grace period
+        ↓
+each client recovers its local player
+        ↓
+each client returns to its own checkpoint
+```
+
+This makes normal defeat different from a true lethal execution while still avoiding Skyrim's normal save-reload death loop.
 
 ## Architecture
 
 ```text
-Acheron local player state
+Acheron + Skyrim local state
         ↓
 AcheronTogether.dll
         ↓
@@ -29,37 +75,61 @@ official Skyrim Together Reborn connection
         ↓
 STRPM ProxyResolver
         ↓
-remote player's local STR proxy
+remote-player state table
         ↓
-Acheron Papyrus API
+Acheron proxy state + party wipe evaluation
 ```
 
 Acheron Together is **STRPM-only**. There is no custom UDP transport and no fallback network stack.
 
-The plugin reads Acheron's runtime keywords from `Acheron.esm`:
+Remote Acheron state is applied through Acheron's public Papyrus API (`DefeatActor`, `RescueActor`, `PacifyActor`, `ReleaseActor`) rather than manually editing Acheron's internal victim tables.
+
+## Acheron consequences
+
+While the multiplayer runtime is active Acheron Together requests:
 
 ```text
-0x801  Defeated
-0x802  Pacified
+Acheron.DisableConsequence(true)
 ```
 
-Remote state is applied through Acheron's public native Papyrus functions (`DefeatActor`, `RescueActor`, `PacifyActor`, `ReleaseActor`) instead of directly mutating Acheron's internal data structures.
+This prevents a local single-player Acheron consequence from taking control before the shared party state is known.
 
-## Networking behavior
+Acheron consequences are restored when Acheron Together stops.
 
-The STRPM channel is:
+The current v0.2.0 gameplay loop therefore prioritizes **co-op rescue / party respawn** over Acheron's normal consequence quests.
+
+## Checkpoints
+
+Acheron Together creates its own invisible runtime `XMarker` and moves it to the local player whenever a checkpoint is updated. It does not depend on `PartyBleedoutCheck.esp` or BCBS Respawn Patch.
+
+A checkpoint is updated:
+
+- when the runtime checkpoint system initializes;
+- when F5 is pressed;
+- two seconds after a cell transition involving an interior cell;
+- every five real-time minutes outdoors while the player is not in combat.
+
+Exterior-to-exterior cell changes do not create checkpoints.
+
+No checkpoint is updated while the local player is `Defeated` or `Dead`.
+
+Each client owns its own checkpoint. This is deliberate: STR clients can have different local cell/proxy timing, so the respawn destination is always a position valid in that client's game state.
+
+## Network protocol
+
+Channel:
 
 ```text
 acherontogether
 ```
 
-Wire payload v1:
+v0.2.0 wire payload:
 
 ```text
-AT1|<revision>|<state>
+AT2|<revision>|<acheron-state>|<dead>
 ```
 
-State values:
+Acheron state values:
 
 ```text
 0 = normal
@@ -67,11 +137,16 @@ State values:
 2 = defeated
 ```
 
-Messages use reliable + ordered STRPM delivery. A five-second heartbeat resends the current local state so late joins/reconnects can converge even when the player state has not changed recently.
+Dead values:
 
-Incoming messages are keyed by the authenticated STRPM sender `ConnectionID`. The STRPM ProxyResolver converts that identity to the current local proxy FormID. Messages received before a proxy mapping exists are retained and applied when the mapping becomes available.
+```text
+0 = alive
+1 = true Skyrim death
+```
 
-All Skyrim object lookup and Acheron calls are dispatched on the game thread.
+Messages use reliable + ordered STRPM delivery. A five-second heartbeat resends the current local state for reconnect/late-proxy convergence.
+
+The receiver still understands `AT1` packets for diagnostics, but v0.2.0 transmits `AT2` only. Both players should use the same Acheron Together version during testing.
 
 ## Requirements
 
@@ -81,22 +156,22 @@ Development target:
 - SKSE64 2.2.6
 - Skyrim Together Reborn 1.8.0
 - STRPluginMessagingAPI 0.8.x with ProxyResolver
-- Acheron (current 1.11.x line)
+- Acheron 1.11.x
 
 Acheron and STRPluginMessagingAPI must be installed on every client.
 
-## Build
+`Killmove Fixes` is not required by Acheron Together. If you want lethal killmoves to cause the true-death respawn path, do not globally disable NPC killmoves against the player.
 
-The project uses CommonLibSSE-NG through vcpkg.
+## Build
 
 ```powershell
 .\build_release.bat
 ```
 
-The script reads the version from `VERSION` and creates:
+The build script reads `VERSION` and creates:
 
 ```text
-dist/AcheronTogether-v0.1.0.zip
+dist/AcheronTogether-v0.2.0.zip
 ```
 
 Archive layout:
@@ -107,18 +182,20 @@ SKSE/
    └─ AcheronTogether.dll
 ```
 
-## First two-client test pass
+## First v0.2.0 two-client test pass
 
-1. Install the same Acheron version, STRPM version and Acheron Together build on both clients.
-2. Start STR and join the same server.
-3. Confirm both `AcheronTogether.log` files contain `ACHNET STRPM READY` and a `ACHNET PROXY` line for the other player.
-4. Defeat Player 1 and verify Player 2 sees Player 1's proxy enter Acheron's defeated/bleedout state.
-5. Rescue Player 1 and verify the remote proxy returns to normal.
+1. Install the same Acheron, STRPM and Acheron Together v0.2.0 build on both clients.
+2. Join the same STR server.
+3. Verify `ACHNET STRPM READY` and `ACHNET PROXY` in both logs.
+4. Defeat Player 1 while Player 2 remains alive: Player 1 must stay defeated and must **not** party-respawn.
+5. Rescue Player 1 and verify both clients converge back to normal.
 6. Repeat Player 2 -> Player 1.
-7. Test a pacified-only transition if the current Acheron setup exposes one.
-8. Disconnect/reconnect one client while the other player is defeated and verify state converges after proxy resolution/heartbeat.
-
-For initial testing, keep Acheron consequence teleport/resolution features conservative. v0.1.0 synchronizes defeat state only; it does not coordinate consequence quest selection between clients.
+7. Press F5, move away, then cause a true death/killmove. Verify the local player returns to the F5 checkpoint.
+8. Defeat both players. After the wipe grace period, both should recover and return to their own checkpoints.
+9. Test `Player 1 = Dead` + `Player 2 = Defeated` and verify it resolves as a party wipe.
+10. Enter a dungeon, wait at least two seconds after the transition, move deeper, then force a true death and verify the entrance-area checkpoint.
+11. Disconnect/reconnect one client and verify ProxyResolver removal prevents stale disconnected-player state from blocking wipe evaluation.
+12. Verify there is no `AT2` packet storm; unchanged state should only heartbeat every five seconds.
 
 ## Logs
 
@@ -135,15 +212,14 @@ ACHNET TX
 ACHNET RX
 ACHNET PROXY
 ACHNET APPLY
+ACHRESP CHECKPOINT
+ACHRESP local true death detected
+ACHRESP party wipe candidate detected
+ACHRESP RESPAWN
 ```
 
-## Development direction
+## Experimental status
 
-Likely next milestones after the state baseline is validated:
+v0.2.0 is the first implementation of the respawn layer and should be treated as a development build until the complete two-client test matrix has passed.
 
-- authoritative handling of player defeat/rescue transitions
-- shared all-players-defeated detection
-- consequence ownership (host/leader authority)
-- synchronized consequence/resolution selection
-- safe teleport coordination
-- recovery/revive rules compatible with STR
+The detailed design and validation matrix are in `docs/RESPAWN-DESIGN.md`.
