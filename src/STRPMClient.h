@@ -8,7 +8,7 @@ namespace AcheronTogether
     class STRPMClient
     {
     public:
-        using StateCallback = std::function<void(STRPMApi::ConnectionID, AcheronState, std::uint64_t)>;
+        using StateCallback = std::function<void(STRPMApi::ConnectionID, PlayerState, std::uint64_t)>;
         using MappingCallback = std::function<void(const STRPMApi::ProxyMappingEvent&)>;
 
         static STRPMClient& GetSingleton();
@@ -16,7 +16,7 @@ namespace AcheronTogether
 
         bool Start(StateCallback stateCallback, MappingCallback mappingCallback);
         void Stop();
-        bool SendState(AcheronState state, std::uint64_t revision);
+        bool SendState(const PlayerState& state, std::uint64_t revision);
         [[nodiscard]] std::optional<RE::FormID> ResolveProxy(STRPMApi::ConnectionID connectionID) const;
 
     private:
