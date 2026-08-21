@@ -2,11 +2,13 @@
 
 Acheron Together is an experimental SKSE/CommonLibSSE-NG plugin that turns Acheron into a multiplayer defeat/death layer for Skyrim Together Reborn.
 
-Current development version: **v0.2.0**.
+Current development version: **v0.2.1**.
 
-## v0.2.0 scope
+## v0.2.1 scope
 
-v0.2.0 keeps the v0.1.0 Acheron proxy-state synchronization and adds the first multiplayer respawn framework:
+v0.2.1 keeps the v0.2.0 multiplayer respawn framework and fixes the initial CommonLibSSE-NG 3.5.3 / MSVC build incompatibilities found during the first local compile pass.
+
+Current functionality:
 
 - synchronized Acheron `normal`, `pacified` and `defeated` states;
 - synchronized true Skyrim `dead` state;
@@ -14,7 +16,7 @@ v0.2.0 keeps the v0.1.0 Acheron proxy-state synchronization and adds the first m
 - controlled respawn after a true death, including lethal killmoves that bypass Acheron;
 - multiplayer party-wipe detection;
 - coordinated local recovery/respawn when every known STR player is incapacitated;
-- Acheron consequence suppression while the STR multiplayer runtime is active.
+- Acheron consequence suppression while another STR player is present.
 
 A player is considered **incapacitated** when they are either Acheron `Defeated` or truly `Dead`.
 
@@ -86,7 +88,7 @@ Remote Acheron state is applied through Acheron's public Papyrus API (`DefeatAct
 
 ## Acheron consequences
 
-While the multiplayer runtime is active Acheron Together requests:
+When another STR player is present Acheron Together requests:
 
 ```text
 Acheron.DisableConsequence(true)
@@ -94,9 +96,9 @@ Acheron.DisableConsequence(true)
 
 This prevents a local single-player Acheron consequence from taking control before the shared party state is known.
 
-Acheron consequences are restored when Acheron Together stops.
+Acheron consequences are restored when the player returns to a solo state or Acheron Together stops.
 
-The current v0.2.0 gameplay loop therefore prioritizes **co-op rescue / party respawn** over Acheron's normal consequence quests.
+The current gameplay loop therefore prioritizes **co-op rescue / party respawn** over Acheron's normal consequence quests during multiplayer sessions.
 
 ## Checkpoints
 
@@ -123,7 +125,7 @@ Channel:
 acherontogether
 ```
 
-v0.2.0 wire payload:
+v0.2.1 wire payload:
 
 ```text
 AT2|<revision>|<acheron-state>|<dead>
@@ -146,7 +148,7 @@ Dead values:
 
 Messages use reliable + ordered STRPM delivery. A five-second heartbeat resends the current local state for reconnect/late-proxy convergence.
 
-The receiver still understands `AT1` packets for diagnostics, but v0.2.0 transmits `AT2` only. Both players should use the same Acheron Together version during testing.
+The receiver still understands `AT1` packets for diagnostics, but v0.2.1 transmits `AT2` only. Both players should use the same Acheron Together version during testing.
 
 ## Requirements
 
@@ -171,7 +173,7 @@ Acheron and STRPluginMessagingAPI must be installed on every client.
 The build script reads `VERSION` and creates:
 
 ```text
-dist/AcheronTogether-v0.2.0.zip
+dist/AcheronTogether-v0.2.1.zip
 ```
 
 Archive layout:
@@ -182,9 +184,9 @@ SKSE/
    └─ AcheronTogether.dll
 ```
 
-## First v0.2.0 two-client test pass
+## First v0.2.1 two-client test pass
 
-1. Install the same Acheron, STRPM and Acheron Together v0.2.0 build on both clients.
+1. Install the same Acheron, STRPM and Acheron Together v0.2.1 build on both clients.
 2. Join the same STR server.
 3. Verify `ACHNET STRPM READY` and `ACHNET PROXY` in both logs.
 4. Defeat Player 1 while Player 2 remains alive: Player 1 must stay defeated and must **not** party-respawn.
@@ -220,6 +222,6 @@ ACHRESP RESPAWN
 
 ## Experimental status
 
-v0.2.0 is the first implementation of the respawn layer and should be treated as a development build until the complete two-client test matrix has passed.
+v0.2.1 is still an experimental development build until the complete two-client test matrix has passed.
 
 The detailed design and validation matrix are in `docs/RESPAWN-DESIGN.md`.
