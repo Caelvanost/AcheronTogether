@@ -9,14 +9,14 @@ namespace AcheronTogether
         using CallbackPtr = RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor>;
 
         template <class... Args>
-        bool DispatchStatic(const char* functionName, Args&&... args)
+        bool DispatchStatic(const char* functionName, Args... args)
         {
             auto* vm = VM::GetSingleton();
             if (!vm) {
                 return false;
             }
 
-            auto packed = RE::MakeFunctionArguments(std::forward<Args>(args)...);
+            auto packed = RE::MakeFunctionArguments(std::move(args)...);
             CallbackPtr callback{};
             return vm->DispatchStaticCall("Acheron", functionName, packed, callback);
         }
