@@ -596,21 +596,21 @@ namespace AcheronTogether
             _soloDefeatObservedAt = {};
         }
 
-        const bool partyWiped = settings.partyWipeRespawn && IsPartyWiped(state);
-        if (partyWiped) {
-            if (!_partyWipeObserved) {
-                _partyWipeObserved = true;
-                _partyWipeObservedAt = now;
-                SKSE::log::warn("ACHRESP party wipe candidate detected");
-            }
+        if (!_partyWipeObserved && settings.partyWipeRespawn && IsPartyWiped(state)) {
+            _partyWipeObserved = true;
+            _partyWipeObservedAt = now;
+            SKSE::log::warn("ACHRESP party wipe latched");
+        }
 
-            if (now - _partyWipeObservedAt >= Seconds(settings.partyWipeDelaySeconds)) {
+        if (_partyWipeObserved) {
+            if (!state.IsIncapacitated()) {
+                _partyWipeObserved = false;
+                _partyWipeObservedAt = {};
+                SKSE::log::info("ACHRESP party wipe cancelled: local player recovered");
+            } else if (now - _partyWipeObservedAt >= Seconds(settings.partyWipeDelaySeconds)) {
                 RespawnLocal(player, "party-wipe");
                 return;
             }
-        } else {
-            _partyWipeObserved = false;
-            _partyWipeObservedAt = {};
         }
 
         if (_deathObserved && settings.individualTrueDeathRespawn) {
