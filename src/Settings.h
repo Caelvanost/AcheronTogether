@@ -11,14 +11,16 @@ namespace AcheronTogether
         kShowCheckpointNotification = 4,
         kIndividualTrueDeathRespawn = 5,
         kPartyWipeRespawn = 6,
-        kDebugHotkeys = 7
+        kDebugHotkeys = 7,
+        kSoloDefeatRespawn = 8
     };
 
     enum class FloatSetting : std::int32_t
     {
         kOutdoorCheckpointMinutes = 0,
         kTrueDeathDelaySeconds = 1,
-        kPartyWipeDelaySeconds = 2
+        kPartyWipeDelaySeconds = 2,
+        kSoloDefeatDelaySeconds = 3
     };
 
     struct RuntimeSettings
@@ -31,10 +33,12 @@ namespace AcheronTogether
         bool individualTrueDeathRespawn{ true };
         bool partyWipeRespawn{ true };
         bool debugHotkeys{ true };
+        bool soloDefeatRespawn{ true };
 
         float outdoorCheckpointMinutes{ 5.0f };
         float trueDeathDelaySeconds{ 1.5f };
         float partyWipeDelaySeconds{ 1.25f };
+        float soloDefeatDelaySeconds{ 30.0f };
     };
 
     class Settings final
