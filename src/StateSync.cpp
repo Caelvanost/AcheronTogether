@@ -90,6 +90,7 @@ namespace AcheronTogether
         _checkpointMarker = {};
         _haveLocalState = false;
         _localRevision = 0;
+        _debugDeadOverride = false;
         SKSE::log::info("Acheron multiplayer synchronization stopped");
     }
 
@@ -107,6 +108,9 @@ namespace AcheronTogether
         _pendingCheckpointAt = {};
         _lastOutdoorCheckpoint = {};
         _f5WasDown = false;
+        _f6WasDown = false;
+        _f7WasDown = false;
+        _debugDeadOverride = false;
         _deathObserved = false;
         _deathObservedAt = {};
         _partyWipeObserved = false;
@@ -123,7 +127,7 @@ namespace AcheronTogether
         }
 
         state.acheron = AcheronBridge::GetSingleton().ReadState(player);
-        state.dead = player->IsDead();
+        state.dead = player->IsDead() || _debugDeadOverride;
         return state;
     }
 
@@ -137,6 +141,8 @@ namespace AcheronTogether
         if (!player) {
             return;
         }
+
+        HandleDebugHotkeys(player);
 
         const auto now = std::chrono::steady_clock::now();
         const auto state = ReadLocalState(player);
@@ -334,6 +340,7 @@ namespace AcheronTogether
             player->GetPositionX(),
             player->GetPositionY(),
             player->GetPositionZ());
+        RE::DebugNotification("Checkpoint updated.");
         return true;
     }
 
@@ -387,6 +394,31 @@ namespace AcheronTogether
             !player->IsInCombat()) {
             UpdateCheckpoint(player, "outdoor-timer");
         }
+    }
+
+    void StateSync::HandleDebugHotkeys(RE::PlayerCharacter* player)
+    {
+        if (!player) {
+            return;
+        }
+
+        const bool f6Down = (GetAsyncKeyState(VK_F6) & 0x8000) != 0;
+        if (f6Down && !_f6WasDown) {
+            SKSE::log::warn("ACHDEBUG F6 force defeat requested");
+            RE::DebugNotification("Acheron Together: Force Defeat");
+            AcheronBridge::GetSingleton().ApplyState(player, AcheronState::kDefeated);
+        }
+        _f6WasDown = f6Down;
+
+        const bool f7Down = (GetAsyncKeyState(VK_F7) & 0x8000) != 0;
+        if (f7Down && !_f7WasDown) {
+            if (!_debugDeadOverride) {
+                _debugDeadOverride = true;
+                SKSE::log::warn("ACHDEBUG F7 simulated true death requested");
+                RE::DebugNotification("Acheron Together: Simulated True Death");
+            }
+        }
+        _f7WasDown = f7Down;
     }
 
     bool StateSync::IsPartyWiped(const PlayerState& localState) const
@@ -444,7 +476,7 @@ namespace AcheronTogether
         if (_deathObserved) {
             const auto elapsed = now - _deathObservedAt;
             if ((elapsed >= kDeathMinimumDelay && !player->IsInKillMove()) || elapsed >= kDeathSafetyDelay) {
-                RespawnLocal(player, "true-death");
+                RespawnLocal(player, _debugDeadOverride ? "debug-true-death" : "true-death");
             }
         }
     }
@@ -476,6 +508,7 @@ namespace AcheronTogether
         AcheronBridge::GetSingleton().ApplyState(player, AcheronState::kNormal);
         player->MoveTo(marker.get());
 
+        _debugDeadOverride = false;
         _deathObserved = false;
         _deathObservedAt = {};
         _partyWipeObserved = false;
