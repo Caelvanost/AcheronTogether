@@ -2,12 +2,16 @@
 
 Acheron Together is an experimental SKSE/CommonLibSSE-NG plugin that turns Acheron into a multiplayer defeat/death and checkpoint layer for Skyrim Together Reborn.
 
-Current development version: **v0.3.0**.
+Current development version: **v0.3.1**.
 
-## v0.3.0 highlights
+## v0.3.1 highlights
 
-v0.3.0 replaces the old F5 polling checkpoint design with event-driven checkpoints and adds a SkyUI MCM.
+v0.3.1 keeps the v0.3.0 save-driven checkpoint/MCM architecture and fixes the first runtime validation issues.
 
+- checkpoint marker resolution now uses the Skyrim `XMarker` **EditorID** instead of an incorrect hardcoded FormID;
+- checkpoint tracking now waits for SKSE `kPostLoadGame` before becoming active;
+- the first checkpoint after loading is therefore created only after the loaded game/cell is ready;
+- failed STRPM sends while disconnected are throttled to the heartbeat interval instead of retrying every worker tick;
 - checkpoints can update after **real Skyrim save events** reported by SKSE;
 - manual saves, quicksaves and autosaves all use the same save-event path;
 - interior-transition checkpoints remain available as a configurable fallback, so dungeon entrances still work even when autosaves are disabled;
@@ -17,7 +21,7 @@ v0.3.0 replaces the old F5 polling checkpoint design with event-driven checkpoin
 - respawn delays are configurable;
 - a lightweight ESL-flagged `AcheronTogether.esp` hosts the SkyUI MCM only;
 - the DLL remains responsible for gameplay and network logic;
-- F6/F7 debug tests are now deterministic logical simulations, with equivalent buttons in the MCM.
+- F6/F7 debug tests are deterministic logical simulations, with equivalent buttons in the MCM.
 
 ## Intended gameplay
 
@@ -64,11 +68,11 @@ each client returns to its own checkpoint
 
 ## Checkpoints
 
-Each client owns one invisible runtime `XMarker`. Acheron Together moves that marker when a checkpoint is successfully updated.
+Each client owns one invisible runtime `XMarker`. Acheron Together resolves the Skyrim static by EditorID and creates a local runtime reference only after the loaded game is ready.
 
 Default triggers:
 
-- initial checkpoint after loading/new game;
+- initial checkpoint after `kPostLoadGame` / new game;
 - every SKSE `kSaveGame` event;
 - two seconds after a cell transition involving an interior;
 - every five real-time minutes outdoors while not in combat.
@@ -83,7 +87,7 @@ Checkpoint updated.
 
 ### Why save events instead of F5?
 
-F5 is only one possible way to save Skyrim and polling it was unreliable during quicksave processing. v0.3.0 listens to Skyrim/SKSE's actual save notification instead. Therefore manual saves, quicksaves and autosaves share the same path.
+F5 is only one possible way to save Skyrim and polling it was unreliable during quicksave processing. Acheron Together listens to Skyrim/SKSE's actual save notification instead. Therefore manual saves, quicksaves and autosaves share the same path.
 
 The interior-transition trigger intentionally remains separate. If Skyrim autosaves are disabled, entering a dungeon can still become a checkpoint.
 
@@ -128,7 +132,7 @@ The DLL reads that INI directly, so the core runtime does not depend on the MCM 
 
 ### F6 / Simulated Defeat
 
-F6 now forces Acheron Together's local network state to `Defeated` for deterministic party-wipe testing. The plugin also asks Acheron to enter its real defeated state, but the logical override is authoritative for the test even if another mod prevents the visible bleedout transition.
+F6 forces Acheron Together's local network state to `Defeated` for deterministic party-wipe testing. The plugin also asks Acheron to enter its real defeated state, but the logical override is authoritative for the test even if another mod prevents the visible bleedout transition.
 
 This means F6 is useful even when the player remains visibly controllable.
 
@@ -187,7 +191,7 @@ Dead state:
 1 = true Skyrim death / debug true-death override
 ```
 
-Messages use reliable + ordered STRPM delivery. A five-second heartbeat resends the current local state for reconnect and late-proxy convergence.
+Messages use reliable + ordered STRPM delivery. A five-second heartbeat resends the current local state for reconnect and late-proxy convergence. Failed sends while no STR session is connected use the same retry cadence rather than retrying every 250 ms worker tick.
 
 Acheron Together is **STRPM-only**. There is no custom UDP transport.
 
@@ -243,7 +247,7 @@ Spriggit CLI **0.40.1** is pinned by the repository. If the CLI is not already p
 Expected output:
 
 ```text
-dist/AcheronTogether-v0.3.0.zip
+dist/AcheronTogether-v0.3.1.zip
 ```
 
 Archive layout:
@@ -259,24 +263,23 @@ SKSE/
    └─ AcheronTogether.ini
 ```
 
-## First v0.3.0 validation pass
+## v0.3.1 validation pass
 
 ### Local checkpoint / MCM
 
-1. Install v0.3.0.
-2. Open the **Acheron Together** MCM and verify all three pages are visible.
-3. Leave `On every Skyrim save` and notifications enabled.
-4. Move somewhere recognizable and make a manual save.
-5. Verify `Checkpoint updated.` appears.
-6. Move again and quicksave; verify another update.
-7. Trigger an autosave or enter a dungeon; verify the save or interior-transition trigger creates a checkpoint.
-8. Disable notifications in the MCM and verify checkpoints continue to log without HUD text.
-9. Use `Update checkpoint now` and verify the manual MCM trigger.
-10. Move away, use `Simulate True Death now`, and verify the return to checkpoint.
+1. Install v0.3.1.
+2. Load a save and verify one `Checkpoint updated.` appears shortly after loading completes.
+3. Move somewhere recognizable and make a manual save; verify another update.
+4. Move again and quicksave; verify another update.
+5. Enter an interior/dungeon and wait at least two seconds; verify another update.
+6. In the log, verify the first marker creation contains `ACHRESP checkpoint marker created base=...` instead of an `XMarker ... not found` error.
+7. While not connected to an STR server, verify `ACHNET TX failed result=not-connected` occurs at a low heartbeat cadence rather than several times per second.
+8. Use `Update checkpoint now` in the MCM and verify the manual trigger.
+9. Move away, use `Simulate True Death now`, and verify the return to checkpoint.
 
 ### Two-client party wipe
 
-1. Install the same v0.3.0 build on both clients.
+1. Install the same v0.3.1 build on both clients.
 2. Connect to the same STR server and verify `ACHNET PROXY` on both clients.
 3. Create a checkpoint on both clients by saving.
 4. On P1 use F6 or the MCM `Simulate Defeat now` button.
@@ -302,6 +305,9 @@ ACHNET TX
 ACHNET RX
 ACHNET PROXY
 ACHNET APPLY
+ACHRESP game load complete; checkpoint tracking enabled
+ACHRESP checkpoint marker created
+ACHRESP CHECKPOINT reason=post-load
 ACHRESP save event queued checkpoint update
 ACHRESP CHECKPOINT reason=save
 ACHRESP CHECKPOINT reason=cell-transition
@@ -313,6 +319,6 @@ ACHDEBUG simulated true death requested
 
 ## Experimental status
 
-v0.3.0 is a development build. Save-driven checkpoints and the MCM architecture should be validated locally before the full two-client matrix is considered stable.
+v0.3.1 is a development build. The checkpoint marker fix and post-load gating should be validated locally before the full two-client matrix is considered stable.
 
 The lower-level respawn design notes remain in `docs/RESPAWN-DESIGN.md`.
