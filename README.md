@@ -2,11 +2,11 @@
 
 Acheron Together is an experimental SKSE/CommonLibSSE-NG plugin that turns Acheron into a multiplayer defeat/death layer for Skyrim Together Reborn.
 
-Current development version: **v0.2.1**.
+Current development version: **v0.2.2**.
 
-## v0.2.1 scope
+## v0.2.2 scope
 
-v0.2.1 keeps the v0.2.0 multiplayer respawn framework and fixes the initial CommonLibSSE-NG 3.5.3 / MSVC build incompatibilities found during the first local compile pass.
+v0.2.2 keeps the multiplayer defeat/respawn framework and adds deterministic development controls so the network and respawn paths can be tested without relying on console damage or a random killmove.
 
 Current functionality:
 
@@ -16,9 +16,59 @@ Current functionality:
 - controlled respawn after a true death, including lethal killmoves that bypass Acheron;
 - multiplayer party-wipe detection;
 - coordinated local recovery/respawn when every known STR player is incapacitated;
-- Acheron consequence suppression while another STR player is present.
+- Acheron consequence suppression while another STR player is present;
+- HUD notification when a checkpoint is successfully updated;
+- development hotkeys for forced Acheron defeat and simulated true death.
 
 A player is considered **incapacitated** when they are either Acheron `Defeated` or truly `Dead`.
+
+## Development hotkeys
+
+These hotkeys are temporary development tools:
+
+```text
+F5 = update checkpoint
+F6 = Force Defeat
+F7 = Simulated True Death
+```
+
+### F6 — Force Defeat
+
+F6 calls Acheron's normal defeat API on the local PlayerCharacter. This is the preferred way to test multiplayer defeat and party-wipe behavior.
+
+Expected flow:
+
+```text
+F6
+  ↓
+Acheron.DefeatActor(local player)
+  ↓
+local state becomes Defeated
+  ↓
+AT2 state is sent to the other client
+```
+
+### F7 — Simulated True Death
+
+F7 does not physically kill the PlayerCharacter. It sets Acheron Together's local debug-death override so the exact network/respawn pipeline used by a real lethal death can be tested deterministically.
+
+Expected flow:
+
+```text
+F7
+  ↓
+local AT2 dead state = 1
+  ↓
+remote client receives Dead
+  ↓
+true-death grace period
+  ↓
+local respawn at checkpoint
+  ↓
+AT2 dead state returns to 0
+```
+
+This avoids depending on `player.kill`, `damageav`, or a random NPC killmove during development.
 
 ## Intended gameplay
 
@@ -62,8 +112,6 @@ each client recovers its local player
 each client returns to its own checkpoint
 ```
 
-This makes normal defeat different from a true lethal execution while still avoiding Skyrim's normal save-reload death loop.
-
 ## Architecture
 
 ```text
@@ -98,8 +146,6 @@ This prevents a local single-player Acheron consequence from taking control befo
 
 Acheron consequences are restored when the player returns to a solo state or Acheron Together stops.
 
-The current gameplay loop therefore prioritizes **co-op rescue / party respawn** over Acheron's normal consequence quests during multiplayer sessions.
-
 ## Checkpoints
 
 Acheron Together creates its own invisible runtime `XMarker` and moves it to the local player whenever a checkpoint is updated. It does not depend on `PartyBleedoutCheck.esp` or BCBS Respawn Patch.
@@ -115,7 +161,15 @@ Exterior-to-exterior cell changes do not create checkpoints.
 
 No checkpoint is updated while the local player is `Defeated` or `Dead`.
 
-Each client owns its own checkpoint. This is deliberate: STR clients can have different local cell/proxy timing, so the respawn destination is always a position valid in that client's game state.
+Every successful checkpoint update now displays:
+
+```text
+Checkpoint updated.
+```
+
+and writes a detailed `ACHRESP CHECKPOINT reason=...` line to `AcheronTogether.log`.
+
+Each client owns its own checkpoint.
 
 ## Network protocol
 
@@ -125,7 +179,7 @@ Channel:
 acherontogether
 ```
 
-v0.2.1 wire payload:
+Wire payload:
 
 ```text
 AT2|<revision>|<acheron-state>|<dead>
@@ -143,12 +197,10 @@ Dead values:
 
 ```text
 0 = alive
-1 = true Skyrim death
+1 = true or simulated death
 ```
 
 Messages use reliable + ordered STRPM delivery. A five-second heartbeat resends the current local state for reconnect/late-proxy convergence.
-
-The receiver still understands `AT1` packets for diagnostics, but v0.2.1 transmits `AT2` only. Both players should use the same Acheron Together version during testing.
 
 ## Requirements
 
@@ -173,31 +225,19 @@ Acheron and STRPluginMessagingAPI must be installed on every client.
 The build script reads `VERSION` and creates:
 
 ```text
-dist/AcheronTogether-v0.2.1.zip
+dist/AcheronTogether-v0.2.2.zip
 ```
 
-Archive layout:
+## Recommended v0.2.2 two-client test pass
 
-```text
-SKSE/
-└─ Plugins/
-   └─ AcheronTogether.dll
-```
-
-## First v0.2.1 two-client test pass
-
-1. Install the same Acheron, STRPM and Acheron Together v0.2.1 build on both clients.
-2. Join the same STR server.
-3. Verify `ACHNET STRPM READY` and `ACHNET PROXY` in both logs.
-4. Defeat Player 1 while Player 2 remains alive: Player 1 must stay defeated and must **not** party-respawn.
-5. Rescue Player 1 and verify both clients converge back to normal.
-6. Repeat Player 2 -> Player 1.
-7. Press F5, move away, then cause a true death/killmove. Verify the local player returns to the F5 checkpoint.
-8. Defeat both players. After the wipe grace period, both should recover and return to their own checkpoints.
-9. Test `Player 1 = Dead` + `Player 2 = Defeated` and verify it resolves as a party wipe.
-10. Enter a dungeon, wait at least two seconds after the transition, move deeper, then force a true death and verify the entrance-area checkpoint.
-11. Disconnect/reconnect one client and verify ProxyResolver removal prevents stale disconnected-player state from blocking wipe evaluation.
-12. Verify there is no `AT2` packet storm; unchanged state should only heartbeat every five seconds.
+1. Install v0.2.2 on both clients and join the same STR server.
+2. Press F5 on both clients and verify the `Checkpoint updated.` HUD notification.
+3. Move both players away from their checkpoints.
+4. Press F6 on Player 1 only. Player 1 should become Acheron Defeated; Player 2 should remain active; no respawn should occur.
+5. Press F6 on Player 2. Both players are now Defeated; the party wipe should trigger and both local players should return to their own checkpoint.
+6. Reset to normal, then press F7 on Player 1 while Player 2 stays alive. Player 1 should enter the simulated Dead network state and individually respawn at its checkpoint.
+7. Press F7 on Player 1 while Player 2 is Defeated. This should resolve as a party wipe.
+8. Verify both logs contain the expected `ACHDEBUG`, `ACHNET`, and `ACHRESP` sequence.
 
 ## Logs
 
@@ -208,6 +248,8 @@ Documents/My Games/Skyrim Special Edition/SKSE/AcheronTogether.log
 Useful markers:
 
 ```text
+ACHDEBUG F6 force defeat requested
+ACHDEBUG F7 simulated true death requested
 ACHNET STRPM READY
 ACHNET LOCAL
 ACHNET TX
@@ -222,6 +264,6 @@ ACHRESP RESPAWN
 
 ## Experimental status
 
-v0.2.1 is still an experimental development build until the complete two-client test matrix has passed.
+v0.2.2 is still an experimental development build until the complete two-client test matrix has passed.
 
 The detailed design and validation matrix are in `docs/RESPAWN-DESIGN.md`.
