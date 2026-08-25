@@ -9,7 +9,6 @@ namespace AcheronTogether
         constexpr auto kHeartbeatInterval = 5s;
         constexpr auto kCellCheckpointDelay = 2s;
         constexpr auto kRespawnCooldown = 3s;
-        constexpr RE::FormID kXMarkerLocalFormID = 0x3B;
 
         std::chrono::steady_clock::duration Seconds(float value)
         {
@@ -93,10 +92,13 @@ namespace AcheronTogether
         AcheronBridge::GetSingleton().SetConsequenceDisabled(false);
         STRPMClient::GetSingleton().Stop();
 
+        _gameReady.store(false);
         _remoteStates.clear();
         _checkpointMarker = {};
         _haveLocalState = false;
         _localRevision = 0;
+        _lastHeartbeat = {};
+        _lastSendAttempt = {};
         _checkpointRequest.store(CheckpointRequest::kNone);
         _simulatedDefeatRequested.store(false);
         _simulatedTrueDeathRequested.store(false);
@@ -108,10 +110,12 @@ namespace AcheronTogether
     void StateSync::ResetSession()
     {
         AcheronBridge::GetSingleton().SetConsequenceDisabled(false);
+        _gameReady.store(false);
         _remoteStates.clear();
         _checkpointMarker = {};
         _haveLocalState = false;
         _lastHeartbeat = {};
+        _lastSendAttempt = {};
         _lastCellID = 0;
         _lastCellInterior = false;
         _cellTrackingInitialized = false;
@@ -133,9 +137,21 @@ namespace AcheronTogether
         SKSE::log::info("ACHNET session and checkpoint state reset");
     }
 
+    void StateSync::OnGameLoaded()
+    {
+        _lastCellID = 0;
+        _lastCellInterior = false;
+        _cellTrackingInitialized = false;
+        _checkpointPending = false;
+        _pendingCheckpointAt = {};
+        _lastOutdoorCheckpoint = {};
+        _gameReady.store(true);
+        SKSE::log::info("ACHRESP game load complete; checkpoint tracking enabled");
+    }
+
     void StateSync::OnGameSaved()
     {
-        if (!_running.load()) {
+        if (!_running.load() || !_gameReady.load()) {
             return;
         }
 
@@ -178,7 +194,7 @@ namespace AcheronTogether
 
     void StateSync::Tick()
     {
-        if (!_running.load()) {
+        if (!_running.load() || !_gameReady.load()) {
             return;
         }
 
@@ -214,7 +230,7 @@ namespace AcheronTogether
                 _localRevision);
             SendLocalState(true);
         } else if (_lastHeartbeat == std::chrono::steady_clock::time_point{} || now - _lastHeartbeat >= kHeartbeatInterval) {
-            SendLocalState(true);
+            SendLocalState(false);
         }
 
         EvaluateRespawn(player, state, now);
@@ -227,10 +243,13 @@ namespace AcheronTogether
         }
 
         const auto now = std::chrono::steady_clock::now();
-        if (!force && _lastHeartbeat != std::chrono::steady_clock::time_point{} && now - _lastHeartbeat < kHeartbeatInterval) {
+        if (!force &&
+            _lastSendAttempt != std::chrono::steady_clock::time_point{} &&
+            now - _lastSendAttempt < kHeartbeatInterval) {
             return;
         }
 
+        _lastSendAttempt = now;
         if (STRPMClient::GetSingleton().SendState(_localState, _localRevision)) {
             _lastHeartbeat = now;
         }
@@ -336,10 +355,9 @@ namespace AcheronTogether
             return true;
         }
 
-        auto* data = RE::TESDataHandler::GetSingleton();
-        auto* xMarker = data ? data->LookupForm<RE::TESBoundObject>(kXMarkerLocalFormID, "Skyrim.esm") : nullptr;
+        auto* xMarker = RE::TESForm::LookupByEditorID<RE::TESObjectSTAT>("XMarker");
         if (!xMarker) {
-            SKSE::log::error("ACHRESP checkpoint XMarker 0000003B not found");
+            SKSE::log::error("ACHRESP checkpoint XMarker editor ID not found");
             return false;
         }
 
@@ -351,7 +369,8 @@ namespace AcheronTogether
 
         _checkpointMarker = placed->GetHandle();
         SKSE::log::info(
-            "ACHRESP checkpoint marker created form={:08X} cell={:08X}",
+            "ACHRESP checkpoint marker created base={:08X} form={:08X} cell={:08X}",
+            xMarker->GetFormID(),
             placed->GetFormID(),
             player->GetParentCell() ? player->GetParentCell()->GetFormID() : 0);
         return true;
@@ -417,7 +436,7 @@ namespace AcheronTogether
             _lastCellInterior = interior;
             _lastOutdoorCheckpoint = now;
             if (settings.initialCheckpoint) {
-                UpdateCheckpoint(player, "initial");
+                UpdateCheckpoint(player, "post-load");
             }
         } else if (cellID != _lastCellID) {
             const bool previousInterior = _lastCellInterior;
