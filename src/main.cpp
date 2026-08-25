@@ -47,8 +47,13 @@ namespace
             stateSync.ResetSession();
             break;
 
+        case SKSE::MessagingInterface::kPostLoadGame:
+            stateSync.OnGameLoaded();
+            break;
+
         case SKSE::MessagingInterface::kNewGame:
             stateSync.ResetSession();
+            stateSync.OnGameLoaded();
             break;
 
         default:
