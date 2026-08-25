@@ -83,6 +83,8 @@ namespace AcheronTogether
         std::chrono::steady_clock::time_point _deathObservedAt{};
         bool _partyWipeObserved{ false };
         std::chrono::steady_clock::time_point _partyWipeObservedAt{};
+        bool _soloDefeatObserved{ false };
+        std::chrono::steady_clock::time_point _soloDefeatObservedAt{};
         std::chrono::steady_clock::time_point _respawnCooldownUntil{};
     };
 }
