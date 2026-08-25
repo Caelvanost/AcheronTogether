@@ -2,32 +2,44 @@
 
 Acheron Together is an experimental SKSE/CommonLibSSE-NG plugin that turns Acheron into a multiplayer defeat/death and checkpoint layer for Skyrim Together Reborn.
 
-Current development version: **v0.3.1**.
+Current development version: **v0.3.2**.
 
-## v0.3.1 highlights
+## v0.3.2 highlights
 
-v0.3.1 keeps the v0.3.0 save-driven checkpoint/MCM architecture and fixes the first runtime validation issues.
+v0.3.2 adds delayed solo Defeat recovery while keeping the v0.3.1 checkpoint fixes.
 
-- checkpoint marker resolution now uses the Skyrim `XMarker` **EditorID** instead of an incorrect hardcoded FormID;
-- checkpoint tracking now waits for SKSE `kPostLoadGame` before becoming active;
-- the first checkpoint after loading is therefore created only after the loaded game/cell is ready;
-- failed STRPM sends while disconnected are throttled to the heartbeat interval instead of retrying every worker tick;
-- checkpoints can update after **real Skyrim save events** reported by SKSE;
-- manual saves, quicksaves and autosaves all use the same save-event path;
-- interior-transition checkpoints remain available as a configurable fallback, so dungeon entrances still work even when autosaves are disabled;
-- periodic outdoor checkpoints are configurable;
-- checkpoint notifications can be enabled/disabled;
-- individual true-death and party-wipe respawn can be enabled/disabled separately;
-- respawn delays are configurable;
-- a lightweight ESL-flagged `AcheronTogether.esp` hosts the SkyUI MCM only;
-- the DLL remains responsible for gameplay and network logic;
-- F6/F7 debug tests are deterministic logical simulations, with equivalent buttons in the MCM.
+- when no other STR player is present, a local `Defeated` state now starts a configurable solo respawn timer;
+- the default solo Defeat delay is **30 seconds**;
+- rescue/normal recovery cancels the solo timer immediately;
+- true death cancels the solo timer and uses the existing true-death respawn path instead;
+- connecting another STR player cancels the solo timer and restores normal multiplayer party-wipe semantics;
+- the MCM exposes **Respawn after solo Defeat** and **Solo Defeat delay**;
+- checkpoint marker resolution uses the Skyrim `XMarker` EditorID;
+- checkpoint tracking waits for SKSE `kPostLoadGame` before becoming active;
+- failed STRPM sends while disconnected are throttled to the heartbeat interval;
+- saves, interior transitions and periodic outdoor checkpoints remain configurable.
 
 ## Intended gameplay
 
 A player is considered **incapacitated** when they are either Acheron `Defeated` or truly `Dead`.
 
-### One player is defeated
+### Solo Defeat
+
+```text
+Only local player present
+        ↓
+Player = Defeated
+        ↓
+30 s default solo delay
+        ↓
+recover to Normal
+        ↓
+return to local checkpoint
+```
+
+If the player is rescued before the timer expires, the timer is cancelled. If the player becomes truly `Dead`, the true-death path takes priority.
+
+### One player is defeated in multiplayer
 
 ```text
 Player 1 = Defeated
@@ -85,12 +97,6 @@ When notifications are enabled, a successful update displays:
 Checkpoint updated.
 ```
 
-### Why save events instead of F5?
-
-F5 is only one possible way to save Skyrim and polling it was unreliable during quicksave processing. Acheron Together listens to Skyrim/SKSE's actual save notification instead. Therefore manual saves, quicksaves and autosaves share the same path.
-
-The interior-transition trigger intentionally remains separate. If Skyrim autosaves are disabled, entering a dungeon can still become a checkpoint.
-
 ## MCM
 
 `AcheronTogether.esp` is a small ESL-flagged plugin containing only a Start Game Enabled quest used to host the SkyUI MCM.
@@ -107,6 +113,8 @@ The interior-transition trigger intentionally remains separate. If Skyrim autosa
 
 ### Respawn
 
+- **Respawn after solo Defeat**
+- **Solo Defeat delay** — default 30 s
 - **Individual true-death respawn**
 - **True-death delay**
 - **Party-wipe respawn**
@@ -126,15 +134,23 @@ All MCM settings are persisted in:
 Data/SKSE/Plugins/AcheronTogether.ini
 ```
 
-The DLL reads that INI directly, so the core runtime does not depend on the MCM being open.
-
 ## Debug semantics
 
 ### F6 / Simulated Defeat
 
-F6 forces Acheron Together's local network state to `Defeated` for deterministic party-wipe testing. The plugin also asks Acheron to enter its real defeated state, but the logical override is authoritative for the test even if another mod prevents the visible bleedout transition.
+F6 forces Acheron Together's local state to `Defeated`. With no other STR player present, it now exercises the solo Defeat timer. With another player present, it continues to exercise multiplayer party-wipe logic.
 
-This means F6 is useful even when the player remains visibly controllable.
+Expected solo test:
+
+```text
+F6
+→ Simulated Defeat
+→ ACHRESP solo defeat detected
+→ wait configured delay (30 s default)
+→ ACHRESP solo defeat timeout reached
+→ ACHRESP RESPAWN reason=solo-defeat
+→ return to checkpoint
+```
 
 Expected two-client test:
 
@@ -155,13 +171,6 @@ P2 F6
 
 F7 does not damage the player. It forces `dead=1` in Acheron Together, exercises the same individual respawn pipeline, then clears the override after respawn.
 
-To test it visibly:
-
-1. create a checkpoint;
-2. move well away;
-3. press F7;
-4. verify the local player returns to the checkpoint after the configured delay.
-
 ## Network protocol
 
 Channel:
@@ -176,41 +185,9 @@ Wire payload:
 AT2|<revision>|<acheron-state>|<dead>
 ```
 
-Acheron state:
-
-```text
-0 = normal
-1 = pacified
-2 = defeated
-```
-
-Dead state:
-
-```text
-0 = alive
-1 = true Skyrim death / debug true-death override
-```
-
 Messages use reliable + ordered STRPM delivery. A five-second heartbeat resends the current local state for reconnect and late-proxy convergence. Failed sends while no STR session is connected use the same retry cadence rather than retrying every 250 ms worker tick.
 
 Acheron Together is **STRPM-only**. There is no custom UDP transport.
-
-## Acheron integration
-
-Remote Acheron proxy states are applied through Acheron's public Papyrus functions:
-
-- `DefeatActor`
-- `RescueActor`
-- `PacifyActor`
-- `ReleaseActor`
-
-When another STR player is present, Acheron Together requests:
-
-```text
-Acheron.DisableConsequence(true)
-```
-
-This prioritizes the multiplayer rescue / party-respawn loop over local single-player Acheron consequence quests. Consequences are restored when returning to a solo state or when Acheron Together stops.
 
 ## Requirements
 
@@ -223,70 +200,35 @@ Development target:
 - Acheron 1.11.x
 - SkyUI for the MCM
 
-The DLL can still read `AcheronTogether.ini` directly, but `AcheronTogether.esp`/`AcheronTogetherMCM.pex` require SkyUI at runtime.
-
 ## Build
 
 ```powershell
 .\build_release.bat
 ```
 
-The Windows release script performs six stages:
-
-1. configure CMake;
-2. build `AcheronTogether.dll`;
-3. compile the native/MCM Papyrus scripts with Bethesda's Papyrus compiler;
-4. generate `AcheronTogether.esp` from tracked Spriggit YAML;
-5. stage the default INI;
-6. create the Vortex ZIP.
-
-The script looks for Skyrim in common locations or uses `SKYRIM_ROOT` if set. SkyUI source scripts must be available under Skyrim's `Data/Source/Scripts` so `SKI_ConfigBase.psc` can be compiled against.
-
-Spriggit CLI **0.40.1** is pinned by the repository. If the CLI is not already present under `build/tools`, the release script downloads the pinned `SpriggitCLI.zip` from the official Spriggit GitHub release and uses it to deserialize the tracked YAML into the lightweight ESP.
-
 Expected output:
 
 ```text
-dist/AcheronTogether-v0.3.1.zip
+dist/AcheronTogether-v0.3.2.zip
 ```
 
-Archive layout:
+## v0.3.2 validation pass
 
-```text
-AcheronTogether.esp
-Scripts/
-├─ AcheronTogetherMCM.pex
-└─ AcheronTogetherNative.pex
-SKSE/
-└─ Plugins/
-   ├─ AcheronTogether.dll
-   └─ AcheronTogether.ini
-```
+### Solo Defeat
 
-## v0.3.1 validation pass
+1. Install v0.3.2 and connect to an STR server with no other player in the party.
+2. Create/update a checkpoint and move away from it.
+3. Leave `Respawn after solo Defeat` enabled and `Solo Defeat delay` at 30 seconds.
+4. Press F6 or use `Simulate Defeat now`.
+5. Verify there is no immediate respawn.
+6. After about 30 seconds, verify the player returns to the checkpoint.
+7. Verify the log contains `ACHRESP solo defeat detected`, `ACHRESP solo defeat timeout reached`, and `ACHRESP RESPAWN reason=solo-defeat`.
 
-### Local checkpoint / MCM
+### Multiplayer
 
-1. Install v0.3.1.
-2. Load a save and verify one `Checkpoint updated.` appears shortly after loading completes.
-3. Move somewhere recognizable and make a manual save; verify another update.
-4. Move again and quicksave; verify another update.
-5. Enter an interior/dungeon and wait at least two seconds; verify another update.
-6. In the log, verify the first marker creation contains `ACHRESP checkpoint marker created base=...` instead of an `XMarker ... not found` error.
-7. While not connected to an STR server, verify `ACHNET TX failed result=not-connected` occurs at a low heartbeat cadence rather than several times per second.
-8. Use `Update checkpoint now` in the MCM and verify the manual trigger.
-9. Move away, use `Simulate True Death now`, and verify the return to checkpoint.
-
-### Two-client party wipe
-
-1. Install the same v0.3.1 build on both clients.
-2. Connect to the same STR server and verify `ACHNET PROXY` on both clients.
-3. Create a checkpoint on both clients by saving.
-4. On P1 use F6 or the MCM `Simulate Defeat now` button.
-5. Verify no respawn while P2 remains alive.
-6. On P2 simulate Defeat.
-7. Verify both clients log `ACHRESP party wipe candidate detected`.
-8. Verify both clients return their local player to their own checkpoint.
+1. Connect a second player.
+2. Defeat only P1 and verify the solo timer is not used and no respawn occurs while P2 is alive.
+3. Defeat P2 and verify the normal party-wipe path still returns both clients to their own checkpoints.
 
 ## Logs
 
@@ -304,13 +246,12 @@ ACHNET LOCAL
 ACHNET TX
 ACHNET RX
 ACHNET PROXY
-ACHNET APPLY
 ACHRESP game load complete; checkpoint tracking enabled
 ACHRESP checkpoint marker created
-ACHRESP CHECKPOINT reason=post-load
-ACHRESP save event queued checkpoint update
-ACHRESP CHECKPOINT reason=save
-ACHRESP CHECKPOINT reason=cell-transition
+ACHRESP CHECKPOINT
+ACHRESP solo defeat detected
+ACHRESP solo defeat timer cancelled
+ACHRESP solo defeat timeout reached
 ACHRESP party wipe candidate detected
 ACHRESP RESPAWN
 ACHDEBUG simulated defeat requested
@@ -319,6 +260,4 @@ ACHDEBUG simulated true death requested
 
 ## Experimental status
 
-v0.3.1 is a development build. The checkpoint marker fix and post-load gating should be validated locally before the full two-client matrix is considered stable.
-
-The lower-level respawn design notes remain in `docs/RESPAWN-DESIGN.md`.
+v0.3.2 is a development build. Validate the new solo Defeat timer locally/alone on an STR server before running the full two-client matrix.
