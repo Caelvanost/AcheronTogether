@@ -1,76 +1,27 @@
 # Acheron Together
 
-Acheron Together is an experimental SKSE/CommonLibSSE-NG plugin that turns Acheron into a multiplayer defeat/death layer for Skyrim Together Reborn.
+Acheron Together is an experimental SKSE/CommonLibSSE-NG plugin that turns Acheron into a multiplayer defeat/death and checkpoint layer for Skyrim Together Reborn.
 
-Current development version: **v0.2.2**.
+Current development version: **v0.3.0**.
 
-## v0.2.2 scope
+## v0.3.0 highlights
 
-v0.2.2 keeps the multiplayer defeat/respawn framework and adds deterministic development controls so the network and respawn paths can be tested without relying on console damage or a random killmove.
+v0.3.0 replaces the old F5 polling checkpoint design with event-driven checkpoints and adds a SkyUI MCM.
 
-Current functionality:
-
-- synchronized Acheron `normal`, `pacified` and `defeated` states;
-- synchronized true Skyrim `dead` state;
-- local runtime checkpoints;
-- controlled respawn after a true death, including lethal killmoves that bypass Acheron;
-- multiplayer party-wipe detection;
-- coordinated local recovery/respawn when every known STR player is incapacitated;
-- Acheron consequence suppression while another STR player is present;
-- HUD notification when a checkpoint is successfully updated;
-- development hotkeys for forced Acheron defeat and simulated true death.
-
-A player is considered **incapacitated** when they are either Acheron `Defeated` or truly `Dead`.
-
-## Development hotkeys
-
-These hotkeys are temporary development tools:
-
-```text
-F5 = update checkpoint
-F6 = Force Defeat
-F7 = Simulated True Death
-```
-
-### F6 — Force Defeat
-
-F6 calls Acheron's normal defeat API on the local PlayerCharacter. This is the preferred way to test multiplayer defeat and party-wipe behavior.
-
-Expected flow:
-
-```text
-F6
-  ↓
-Acheron.DefeatActor(local player)
-  ↓
-local state becomes Defeated
-  ↓
-AT2 state is sent to the other client
-```
-
-### F7 — Simulated True Death
-
-F7 does not physically kill the PlayerCharacter. It sets Acheron Together's local debug-death override so the exact network/respawn pipeline used by a real lethal death can be tested deterministically.
-
-Expected flow:
-
-```text
-F7
-  ↓
-local AT2 dead state = 1
-  ↓
-remote client receives Dead
-  ↓
-true-death grace period
-  ↓
-local respawn at checkpoint
-  ↓
-AT2 dead state returns to 0
-```
-
-This avoids depending on `player.kill`, `damageav`, or a random NPC killmove during development.
+- checkpoints can update after **real Skyrim save events** reported by SKSE;
+- manual saves, quicksaves and autosaves all use the same save-event path;
+- interior-transition checkpoints remain available as a configurable fallback, so dungeon entrances still work even when autosaves are disabled;
+- periodic outdoor checkpoints are configurable;
+- checkpoint notifications can be enabled/disabled;
+- individual true-death and party-wipe respawn can be enabled/disabled separately;
+- respawn delays are configurable;
+- a lightweight ESL-flagged `AcheronTogether.esp` hosts the SkyUI MCM only;
+- the DLL remains responsible for gameplay and network logic;
+- F6/F7 debug tests are now deterministic logical simulations, with equivalent buttons in the MCM.
 
 ## Intended gameplay
+
+A player is considered **incapacitated** when they are either Acheron `Defeated` or truly `Dead`.
 
 ### One player is defeated
 
@@ -78,23 +29,22 @@ This avoids depending on `player.kill`, `damageav`, or a random NPC killmove dur
 Player 1 = Defeated
 Player 2 = Alive
         ↓
-No respawn
+No party respawn
         ↓
-Player 2 can remain active / rescue Player 1
+Player 2 remains active / may rescue Player 1
 ```
 
-### A player suffers a lethal killmove
+### True death
 
 ```text
-Killmove / true Skyrim death
+Player 1 = Dead
+Player 2 = Alive
         ↓
-AT2 dead state is published
+true-death delay
         ↓
-short killmove/death grace period
+Player 1 resurrects locally
         ↓
-local resurrection
-        ↓
-return to local checkpoint
+Player 1 returns to Player 1's local checkpoint
 ```
 
 ### Party wipe
@@ -103,73 +53,110 @@ return to local checkpoint
 Player 1 = Defeated or Dead
 Player 2 = Defeated or Dead
         ↓
-all known players incapacitated
+all known STR players incapacitated
         ↓
-party-wipe grace period
+party-wipe delay
         ↓
 each client recovers its local player
         ↓
 each client returns to its own checkpoint
 ```
 
-## Architecture
-
-```text
-Acheron + Skyrim local state
-        ↓
-AcheronTogether.dll
-        ↓
-STRPluginMessagingAPI.dll
-        ↓
-official Skyrim Together Reborn connection
-        ↓
-STRPM ProxyResolver
-        ↓
-remote-player state table
-        ↓
-Acheron proxy state + party wipe evaluation
-```
-
-Acheron Together is **STRPM-only**. There is no custom UDP transport and no fallback network stack.
-
-Remote Acheron state is applied through Acheron's public Papyrus API (`DefeatActor`, `RescueActor`, `PacifyActor`, `ReleaseActor`) rather than manually editing Acheron's internal victim tables.
-
-## Acheron consequences
-
-When another STR player is present Acheron Together requests:
-
-```text
-Acheron.DisableConsequence(true)
-```
-
-This prevents a local single-player Acheron consequence from taking control before the shared party state is known.
-
-Acheron consequences are restored when the player returns to a solo state or Acheron Together stops.
-
 ## Checkpoints
 
-Acheron Together creates its own invisible runtime `XMarker` and moves it to the local player whenever a checkpoint is updated. It does not depend on `PartyBleedoutCheck.esp` or BCBS Respawn Patch.
+Each client owns one invisible runtime `XMarker`. Acheron Together moves that marker when a checkpoint is successfully updated.
 
-A checkpoint is updated:
+Default triggers:
 
-- when the runtime checkpoint system initializes;
-- when F5 is pressed;
-- two seconds after a cell transition involving an interior cell;
-- every five real-time minutes outdoors while the player is not in combat.
+- initial checkpoint after loading/new game;
+- every SKSE `kSaveGame` event;
+- two seconds after a cell transition involving an interior;
+- every five real-time minutes outdoors while not in combat.
 
-Exterior-to-exterior cell changes do not create checkpoints.
+A checkpoint is never updated while the local player is `Defeated` or `Dead`.
 
-No checkpoint is updated while the local player is `Defeated` or `Dead`.
-
-Every successful checkpoint update now displays:
+When notifications are enabled, a successful update displays:
 
 ```text
 Checkpoint updated.
 ```
 
-and writes a detailed `ACHRESP CHECKPOINT reason=...` line to `AcheronTogether.log`.
+### Why save events instead of F5?
 
-Each client owns its own checkpoint.
+F5 is only one possible way to save Skyrim and polling it was unreliable during quicksave processing. v0.3.0 listens to Skyrim/SKSE's actual save notification instead. Therefore manual saves, quicksaves and autosaves share the same path.
+
+The interior-transition trigger intentionally remains separate. If Skyrim autosaves are disabled, entering a dungeon can still become a checkpoint.
+
+## MCM
+
+`AcheronTogether.esp` is a small ESL-flagged plugin containing only a Start Game Enabled quest used to host the SkyUI MCM.
+
+### Checkpoints
+
+- **On every Skyrim save**
+- **On interior transition**
+- **Initial checkpoint after load**
+- **Show checkpoint notification**
+- **Periodic outdoor checkpoint**
+- **Outdoor interval**
+- **Update checkpoint now**
+
+### Respawn
+
+- **Individual true-death respawn**
+- **True-death delay**
+- **Party-wipe respawn**
+- **Party-wipe delay**
+
+### Debug
+
+- **Enable debug hotkeys**
+- **F6 — Simulated Defeat**
+- **F7 — Simulated True Death**
+- **Simulate Defeat now**
+- **Simulate True Death now**
+
+All MCM settings are persisted in:
+
+```text
+Data/SKSE/Plugins/AcheronTogether.ini
+```
+
+The DLL reads that INI directly, so the core runtime does not depend on the MCM being open.
+
+## Debug semantics
+
+### F6 / Simulated Defeat
+
+F6 now forces Acheron Together's local network state to `Defeated` for deterministic party-wipe testing. The plugin also asks Acheron to enter its real defeated state, but the logical override is authoritative for the test even if another mod prevents the visible bleedout transition.
+
+This means F6 is useful even when the player remains visibly controllable.
+
+Expected two-client test:
+
+```text
+P1 F6
+→ P1 network state = Defeated
+→ P2 alive
+→ no respawn
+
+P2 F6
+→ P2 network state = Defeated
+→ both clients know all players are incapacitated
+→ party wipe
+→ both return to their checkpoints
+```
+
+### F7 / Simulated True Death
+
+F7 does not damage the player. It forces `dead=1` in Acheron Together, exercises the same individual respawn pipeline, then clears the override after respawn.
+
+To test it visibly:
+
+1. create a checkpoint;
+2. move well away;
+3. press F7;
+4. verify the local player returns to the checkpoint after the configured delay.
 
 ## Network protocol
 
@@ -185,7 +172,7 @@ Wire payload:
 AT2|<revision>|<acheron-state>|<dead>
 ```
 
-Acheron state values:
+Acheron state:
 
 ```text
 0 = normal
@@ -193,14 +180,33 @@ Acheron state values:
 2 = defeated
 ```
 
-Dead values:
+Dead state:
 
 ```text
 0 = alive
-1 = true or simulated death
+1 = true Skyrim death / debug true-death override
 ```
 
-Messages use reliable + ordered STRPM delivery. A five-second heartbeat resends the current local state for reconnect/late-proxy convergence.
+Messages use reliable + ordered STRPM delivery. A five-second heartbeat resends the current local state for reconnect and late-proxy convergence.
+
+Acheron Together is **STRPM-only**. There is no custom UDP transport.
+
+## Acheron integration
+
+Remote Acheron proxy states are applied through Acheron's public Papyrus functions:
+
+- `DefeatActor`
+- `RescueActor`
+- `PacifyActor`
+- `ReleaseActor`
+
+When another STR player is present, Acheron Together requests:
+
+```text
+Acheron.DisableConsequence(true)
+```
+
+This prioritizes the multiplayer rescue / party-respawn loop over local single-player Acheron consequence quests. Consequences are restored when returning to a solo state or when Acheron Together stops.
 
 ## Requirements
 
@@ -211,10 +217,9 @@ Development target:
 - Skyrim Together Reborn 1.8.0
 - STRPluginMessagingAPI 0.8.x with ProxyResolver
 - Acheron 1.11.x
+- SkyUI for the MCM
 
-Acheron and STRPluginMessagingAPI must be installed on every client.
-
-`Killmove Fixes` is not required by Acheron Together. If you want lethal killmoves to cause the true-death respawn path, do not globally disable NPC killmoves against the player.
+The DLL can still read `AcheronTogether.ini` directly, but `AcheronTogether.esp`/`AcheronTogetherMCM.pex` require SkyUI at runtime.
 
 ## Build
 
@@ -222,22 +227,63 @@ Acheron and STRPluginMessagingAPI must be installed on every client.
 .\build_release.bat
 ```
 
-The build script reads `VERSION` and creates:
+The Windows release script performs six stages:
+
+1. configure CMake;
+2. build `AcheronTogether.dll`;
+3. compile the native/MCM Papyrus scripts with Bethesda's Papyrus compiler;
+4. generate `AcheronTogether.esp` from tracked Spriggit YAML;
+5. stage the default INI;
+6. create the Vortex ZIP.
+
+The script looks for Skyrim in common locations or uses `SKYRIM_ROOT` if set. SkyUI source scripts must be available under Skyrim's `Data/Source/Scripts` so `SKI_ConfigBase.psc` can be compiled against.
+
+Spriggit CLI **0.40.1** is pinned by the repository. If the CLI is not already present under `build/tools`, the release script downloads the pinned `SpriggitCLI.zip` from the official Spriggit GitHub release and uses it to deserialize the tracked YAML into the lightweight ESP.
+
+Expected output:
 
 ```text
-dist/AcheronTogether-v0.2.2.zip
+dist/AcheronTogether-v0.3.0.zip
 ```
 
-## Recommended v0.2.2 two-client test pass
+Archive layout:
 
-1. Install v0.2.2 on both clients and join the same STR server.
-2. Press F5 on both clients and verify the `Checkpoint updated.` HUD notification.
-3. Move both players away from their checkpoints.
-4. Press F6 on Player 1 only. Player 1 should become Acheron Defeated; Player 2 should remain active; no respawn should occur.
-5. Press F6 on Player 2. Both players are now Defeated; the party wipe should trigger and both local players should return to their own checkpoint.
-6. Reset to normal, then press F7 on Player 1 while Player 2 stays alive. Player 1 should enter the simulated Dead network state and individually respawn at its checkpoint.
-7. Press F7 on Player 1 while Player 2 is Defeated. This should resolve as a party wipe.
-8. Verify both logs contain the expected `ACHDEBUG`, `ACHNET`, and `ACHRESP` sequence.
+```text
+AcheronTogether.esp
+Scripts/
+├─ AcheronTogetherMCM.pex
+└─ AcheronTogetherNative.pex
+SKSE/
+└─ Plugins/
+   ├─ AcheronTogether.dll
+   └─ AcheronTogether.ini
+```
+
+## First v0.3.0 validation pass
+
+### Local checkpoint / MCM
+
+1. Install v0.3.0.
+2. Open the **Acheron Together** MCM and verify all three pages are visible.
+3. Leave `On every Skyrim save` and notifications enabled.
+4. Move somewhere recognizable and make a manual save.
+5. Verify `Checkpoint updated.` appears.
+6. Move again and quicksave; verify another update.
+7. Trigger an autosave or enter a dungeon; verify the save or interior-transition trigger creates a checkpoint.
+8. Disable notifications in the MCM and verify checkpoints continue to log without HUD text.
+9. Use `Update checkpoint now` and verify the manual MCM trigger.
+10. Move away, use `Simulate True Death now`, and verify the return to checkpoint.
+
+### Two-client party wipe
+
+1. Install the same v0.3.0 build on both clients.
+2. Connect to the same STR server and verify `ACHNET PROXY` on both clients.
+3. Create a checkpoint on both clients by saving.
+4. On P1 use F6 or the MCM `Simulate Defeat now` button.
+5. Verify no respawn while P2 remains alive.
+6. On P2 simulate Defeat.
+7. Verify both clients log `ACHRESP party wipe candidate detected`.
+8. Verify both clients return their local player to their own checkpoint.
 
 ## Logs
 
@@ -248,22 +294,25 @@ Documents/My Games/Skyrim Special Edition/SKSE/AcheronTogether.log
 Useful markers:
 
 ```text
-ACHDEBUG F6 force defeat requested
-ACHDEBUG F7 simulated true death requested
+ACHCFG
+ACHMCM
 ACHNET STRPM READY
 ACHNET LOCAL
 ACHNET TX
 ACHNET RX
 ACHNET PROXY
 ACHNET APPLY
-ACHRESP CHECKPOINT
-ACHRESP local true death detected
+ACHRESP save event queued checkpoint update
+ACHRESP CHECKPOINT reason=save
+ACHRESP CHECKPOINT reason=cell-transition
 ACHRESP party wipe candidate detected
 ACHRESP RESPAWN
+ACHDEBUG simulated defeat requested
+ACHDEBUG simulated true death requested
 ```
 
 ## Experimental status
 
-v0.2.2 is still an experimental development build until the complete two-client test matrix has passed.
+v0.3.0 is a development build. Save-driven checkpoints and the MCM architecture should be validated locally before the full two-client matrix is considered stable.
 
-The detailed design and validation matrix are in `docs/RESPAWN-DESIGN.md`.
+The lower-level respawn design notes remain in `docs/RESPAWN-DESIGN.md`.

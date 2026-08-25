@@ -1,18 +1,25 @@
 #include "PCH.h"
 #include "StateSync.h"
+#include "Settings.h"
 
 namespace AcheronTogether
 {
     namespace
     {
         constexpr auto kHeartbeatInterval = 5s;
-        constexpr auto kOutdoorCheckpointInterval = 5min;
         constexpr auto kCellCheckpointDelay = 2s;
-        constexpr auto kPartyWipeGrace = 1250ms;
-        constexpr auto kDeathMinimumDelay = 1500ms;
-        constexpr auto kDeathSafetyDelay = 3500ms;
         constexpr auto kRespawnCooldown = 3s;
         constexpr RE::FormID kXMarkerLocalFormID = 0x3B;
+
+        std::chrono::steady_clock::duration Seconds(float value)
+        {
+            return std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<float>(value));
+        }
+
+        std::chrono::steady_clock::duration Minutes(float value)
+        {
+            return std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<float, std::ratio<60>>(value));
+        }
     }
 
     StateSync& StateSync::GetSingleton()
@@ -90,6 +97,10 @@ namespace AcheronTogether
         _checkpointMarker = {};
         _haveLocalState = false;
         _localRevision = 0;
+        _checkpointRequest.store(CheckpointRequest::kNone);
+        _simulatedDefeatRequested.store(false);
+        _simulatedTrueDeathRequested.store(false);
+        _debugDefeatOverride = false;
         _debugDeadOverride = false;
         SKSE::log::info("Acheron multiplayer synchronization stopped");
     }
@@ -107,9 +118,12 @@ namespace AcheronTogether
         _checkpointPending = false;
         _pendingCheckpointAt = {};
         _lastOutdoorCheckpoint = {};
-        _f5WasDown = false;
+        _checkpointRequest.store(CheckpointRequest::kNone);
+        _simulatedDefeatRequested.store(false);
+        _simulatedTrueDeathRequested.store(false);
         _f6WasDown = false;
         _f7WasDown = false;
+        _debugDefeatOverride = false;
         _debugDeadOverride = false;
         _deathObserved = false;
         _deathObservedAt = {};
@@ -119,6 +133,37 @@ namespace AcheronTogether
         SKSE::log::info("ACHNET session and checkpoint state reset");
     }
 
+    void StateSync::OnGameSaved()
+    {
+        if (!_running.load()) {
+            return;
+        }
+
+        if (!Settings::GetSingleton().Snapshot().checkpointOnSave) {
+            SKSE::log::trace("ACHRESP save observed; save checkpoints disabled");
+            return;
+        }
+
+        _checkpointRequest.store(CheckpointRequest::kSave);
+        SKSE::log::info("ACHRESP save event queued checkpoint update");
+    }
+
+    void StateSync::RequestCheckpoint()
+    {
+        _checkpointRequest.store(CheckpointRequest::kManual);
+        SKSE::log::info("ACHRESP manual checkpoint requested");
+    }
+
+    void StateSync::RequestSimulatedDefeat()
+    {
+        _simulatedDefeatRequested.store(true);
+    }
+
+    void StateSync::RequestSimulatedTrueDeath()
+    {
+        _simulatedTrueDeathRequested.store(true);
+    }
+
     PlayerState StateSync::ReadLocalState(RE::PlayerCharacter* player) const
     {
         PlayerState state{};
@@ -126,7 +171,7 @@ namespace AcheronTogether
             return state;
         }
 
-        state.acheron = AcheronBridge::GetSingleton().ReadState(player);
+        state.acheron = _debugDefeatOverride ? AcheronState::kDefeated : AcheronBridge::GetSingleton().ReadState(player);
         state.dead = player->IsDead() || _debugDeadOverride;
         return state;
     }
@@ -142,13 +187,18 @@ namespace AcheronTogether
             return;
         }
 
-        HandleDebugHotkeys(player);
+        HandleDebugHotkeys();
+        HandleDebugRequests(player);
 
         const auto now = std::chrono::steady_clock::now();
         const auto state = ReadLocalState(player);
 
+        const auto checkpointRequest = _checkpointRequest.exchange(CheckpointRequest::kNone);
+        if (checkpointRequest != CheckpointRequest::kNone) {
+            UpdateCheckpoint(player, checkpointRequest == CheckpointRequest::kSave ? "save" : "manual");
+        }
+
         if (!state.dead) {
-            EnsureCheckpointMarker(player);
             UpdateCheckpointTracking(player, state, now);
         }
 
@@ -300,7 +350,6 @@ namespace AcheronTogether
         }
 
         _checkpointMarker = placed->GetHandle();
-        _lastOutdoorCheckpoint = std::chrono::steady_clock::now();
         SKSE::log::info(
             "ACHRESP checkpoint marker created form={:08X} cell={:08X}",
             placed->GetFormID(),
@@ -316,6 +365,7 @@ namespace AcheronTogether
 
         const auto state = ReadLocalState(player);
         if (state.IsIncapacitated()) {
+            SKSE::log::info("ACHRESP checkpoint skipped reason={} because local player is incapacitated", reason);
             return false;
         }
 
@@ -340,7 +390,10 @@ namespace AcheronTogether
             player->GetPositionX(),
             player->GetPositionY(),
             player->GetPositionZ());
-        RE::DebugNotification("Checkpoint updated.");
+
+        if (Settings::GetSingleton().Snapshot().showCheckpointNotification) {
+            RE::DebugNotification("Checkpoint updated.");
+        }
         return true;
     }
 
@@ -353,6 +406,7 @@ namespace AcheronTogether
             return;
         }
 
+        const auto settings = Settings::GetSingleton().Snapshot();
         auto* cell = player->GetParentCell();
         const auto cellID = cell ? cell->GetFormID() : 0;
         const bool interior = cell && cell->IsInteriorCell();
@@ -361,64 +415,86 @@ namespace AcheronTogether
             _cellTrackingInitialized = true;
             _lastCellID = cellID;
             _lastCellInterior = interior;
-            UpdateCheckpoint(player, "initial");
+            _lastOutdoorCheckpoint = now;
+            if (settings.initialCheckpoint) {
+                UpdateCheckpoint(player, "initial");
+            }
         } else if (cellID != _lastCellID) {
             const bool previousInterior = _lastCellInterior;
             _lastCellID = cellID;
             _lastCellInterior = interior;
 
-            if (previousInterior || interior) {
+            if (settings.checkpointOnInteriorTransition && (previousInterior || interior)) {
                 _checkpointPending = true;
                 _pendingCheckpointAt = now + kCellCheckpointDelay;
                 SKSE::log::trace("ACHRESP interior cell transition detected; checkpoint pending");
+            } else if (!settings.checkpointOnInteriorTransition) {
+                _checkpointPending = false;
             }
         } else if (interior != _lastCellInterior) {
             _lastCellInterior = interior;
-            _checkpointPending = true;
-            _pendingCheckpointAt = now + kCellCheckpointDelay;
+            if (settings.checkpointOnInteriorTransition) {
+                _checkpointPending = true;
+                _pendingCheckpointAt = now + kCellCheckpointDelay;
+            }
         }
 
-        if (_checkpointPending && now >= _pendingCheckpointAt) {
+        if (_checkpointPending && settings.checkpointOnInteriorTransition && now >= _pendingCheckpointAt) {
             UpdateCheckpoint(player, "cell-transition");
         }
 
-        const bool f5Down = (GetAsyncKeyState(VK_F5) & 0x8000) != 0;
-        if (f5Down && !_f5WasDown) {
-            UpdateCheckpoint(player, "F5");
-        }
-        _f5WasDown = f5Down;
-
-        if (!interior &&
+        if (settings.periodicOutdoorCheckpoints &&
+            !interior &&
             _lastOutdoorCheckpoint != std::chrono::steady_clock::time_point{} &&
-            now - _lastOutdoorCheckpoint >= kOutdoorCheckpointInterval &&
+            now - _lastOutdoorCheckpoint >= Minutes(settings.outdoorCheckpointMinutes) &&
             !player->IsInCombat()) {
             UpdateCheckpoint(player, "outdoor-timer");
         }
     }
 
-    void StateSync::HandleDebugHotkeys(RE::PlayerCharacter* player)
+    void StateSync::HandleDebugHotkeys()
     {
-        if (!player) {
+        if (!Settings::GetSingleton().Snapshot().debugHotkeys) {
+            _f6WasDown = false;
+            _f7WasDown = false;
             return;
         }
 
         const bool f6Down = (GetAsyncKeyState(VK_F6) & 0x8000) != 0;
         if (f6Down && !_f6WasDown) {
-            SKSE::log::warn("ACHDEBUG F6 force defeat requested");
-            RE::DebugNotification("Acheron Together: Force Defeat");
-            AcheronBridge::GetSingleton().ApplyState(player, AcheronState::kDefeated);
+            RequestSimulatedDefeat();
         }
         _f6WasDown = f6Down;
 
         const bool f7Down = (GetAsyncKeyState(VK_F7) & 0x8000) != 0;
         if (f7Down && !_f7WasDown) {
-            if (!_debugDeadOverride) {
-                _debugDeadOverride = true;
-                SKSE::log::warn("ACHDEBUG F7 simulated true death requested");
-                RE::DebugNotification("Acheron Together: Simulated True Death");
-            }
+            RequestSimulatedTrueDeath();
         }
         _f7WasDown = f7Down;
+    }
+
+    void StateSync::HandleDebugRequests(RE::PlayerCharacter* player)
+    {
+        if (!player) {
+            return;
+        }
+
+        if (_simulatedDefeatRequested.exchange(false)) {
+            _debugDefeatOverride = true;
+            SKSE::log::warn("ACHDEBUG simulated defeat requested");
+            RE::DebugNotification("Acheron Together: Simulated Defeat");
+
+            // Also ask Acheron to enter its real defeated state. The logical
+            // override keeps the multiplayer wipe test deterministic even if
+            // another mod prevents the visual/bleedout transition.
+            AcheronBridge::GetSingleton().ApplyState(player, AcheronState::kDefeated);
+        }
+
+        if (_simulatedTrueDeathRequested.exchange(false) && !_debugDeadOverride) {
+            _debugDeadOverride = true;
+            SKSE::log::warn("ACHDEBUG simulated true death requested");
+            RE::DebugNotification("Acheron Together: Simulated True Death");
+        }
     }
 
     bool StateSync::IsPartyWiped(const PlayerState& localState) const
@@ -445,6 +521,8 @@ namespace AcheronTogether
             return;
         }
 
+        const auto settings = Settings::GetSingleton().Snapshot();
+
         if (state.dead) {
             if (!_deathObserved) {
                 _deathObserved = true;
@@ -456,7 +534,7 @@ namespace AcheronTogether
             _deathObservedAt = {};
         }
 
-        const bool partyWiped = IsPartyWiped(state);
+        const bool partyWiped = settings.partyWipeRespawn && IsPartyWiped(state);
         if (partyWiped) {
             if (!_partyWipeObserved) {
                 _partyWipeObserved = true;
@@ -464,7 +542,7 @@ namespace AcheronTogether
                 SKSE::log::warn("ACHRESP party wipe candidate detected");
             }
 
-            if (now - _partyWipeObservedAt >= kPartyWipeGrace) {
+            if (now - _partyWipeObservedAt >= Seconds(settings.partyWipeDelaySeconds)) {
                 RespawnLocal(player, "party-wipe");
                 return;
             }
@@ -473,9 +551,11 @@ namespace AcheronTogether
             _partyWipeObservedAt = {};
         }
 
-        if (_deathObserved) {
+        if (_deathObserved && settings.individualTrueDeathRespawn) {
             const auto elapsed = now - _deathObservedAt;
-            if ((elapsed >= kDeathMinimumDelay && !player->IsInKillMove()) || elapsed >= kDeathSafetyDelay) {
+            const auto minimumDelay = Seconds(settings.trueDeathDelaySeconds);
+            const auto safetyDelay = minimumDelay + 2s;
+            if ((elapsed >= minimumDelay && !player->IsInKillMove()) || elapsed >= safetyDelay) {
                 RespawnLocal(player, _debugDeadOverride ? "debug-true-death" : "true-death");
             }
         }
@@ -490,6 +570,7 @@ namespace AcheronTogether
         auto marker = _checkpointMarker.get();
         if (!marker) {
             SKSE::log::error("ACHRESP respawn aborted: no checkpoint marker");
+            RE::DebugNotification("Acheron Together: No checkpoint available.");
             return false;
         }
 
@@ -508,6 +589,7 @@ namespace AcheronTogether
         AcheronBridge::GetSingleton().ApplyState(player, AcheronState::kNormal);
         player->MoveTo(marker.get());
 
+        _debugDefeatOverride = false;
         _debugDeadOverride = false;
         _deathObserved = false;
         _deathObservedAt = {};

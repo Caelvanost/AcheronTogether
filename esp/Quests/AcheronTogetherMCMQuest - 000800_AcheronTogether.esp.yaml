@@ -1,0 +1,26 @@
+FormKey: 000800:AcheronTogether.esp
+EditorID: AcheronTogetherMCMQuest
+VirtualMachineAdapter:
+  Scripts:
+  - Name: AcheronTogetherMCM
+  FileName: ''
+  Aliases:
+  - Property:
+      Name: ''
+      Object: 000800:AcheronTogether.esp
+      Alias: 0
+    Scripts:
+    - Name: SKI_PlayerLoadGameAlias
+Name:
+  TargetLanguage: English
+  Value: Acheron Together
+Flags:
+- StartGameEnabled
+- RunOnce
+QuestFormVersion: 176
+NextAliasID: 1
+Aliases:
+- Name: PlayerAlias
+  Flags: []
+  ForcedReference: 000014:Skyrim.esm
+  VoiceTypes: Null

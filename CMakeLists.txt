@@ -21,6 +21,10 @@ add_commonlibsse_plugin(${PROJECT_NAME}
         src/main.cpp
         src/AcheronBridge.cpp
         src/AcheronBridge.h
+        src/Settings.cpp
+        src/Settings.h
+        src/Papyrus.cpp
+        src/Papyrus.h
         src/StateSync.cpp
         src/StateSync.h
         src/STRPMApi.h
