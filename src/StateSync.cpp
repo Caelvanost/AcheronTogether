@@ -104,6 +104,8 @@ namespace AcheronTogether
         _simulatedTrueDeathRequested.store(false);
         _debugDefeatOverride = false;
         _debugDeadOverride = false;
+        _soloDefeatObserved = false;
+        _soloDefeatObservedAt = {};
         SKSE::log::info("Acheron multiplayer synchronization stopped");
     }
 
@@ -133,6 +135,8 @@ namespace AcheronTogether
         _deathObservedAt = {};
         _partyWipeObserved = false;
         _partyWipeObservedAt = {};
+        _soloDefeatObserved = false;
+        _soloDefeatObservedAt = {};
         _respawnCooldownUntil = {};
         SKSE::log::info("ACHNET session and checkpoint state reset");
     }
@@ -503,9 +507,6 @@ namespace AcheronTogether
             SKSE::log::warn("ACHDEBUG simulated defeat requested");
             RE::DebugNotification("Acheron Together: Simulated Defeat");
 
-            // Also ask Acheron to enter its real defeated state. The logical
-            // override keeps the multiplayer wipe test deterministic even if
-            // another mod prevents the visual/bleedout transition.
             AcheronBridge::GetSingleton().ApplyState(player, AcheronState::kDefeated);
         }
 
@@ -551,6 +552,34 @@ namespace AcheronTogether
         } else {
             _deathObserved = false;
             _deathObservedAt = {};
+        }
+
+        const bool soloDefeated =
+            settings.soloDefeatRespawn &&
+            _remoteStates.empty() &&
+            !state.dead &&
+            state.acheron == AcheronState::kDefeated;
+
+        if (soloDefeated) {
+            if (!_soloDefeatObserved) {
+                _soloDefeatObserved = true;
+                _soloDefeatObservedAt = now;
+                SKSE::log::warn(
+                    "ACHRESP solo defeat detected delay={:.2f}s",
+                    settings.soloDefeatDelaySeconds);
+            }
+
+            if (now - _soloDefeatObservedAt >= Seconds(settings.soloDefeatDelaySeconds)) {
+                SKSE::log::warn("ACHRESP solo defeat timeout reached");
+                RespawnLocal(player, "solo-defeat");
+                return;
+            }
+        } else {
+            if (_soloDefeatObserved) {
+                SKSE::log::info("ACHRESP solo defeat timer cancelled");
+            }
+            _soloDefeatObserved = false;
+            _soloDefeatObservedAt = {};
         }
 
         const bool partyWiped = settings.partyWipeRespawn && IsPartyWiped(state);
@@ -614,6 +643,8 @@ namespace AcheronTogether
         _deathObservedAt = {};
         _partyWipeObserved = false;
         _partyWipeObservedAt = {};
+        _soloDefeatObserved = false;
+        _soloDefeatObservedAt = {};
         _respawnCooldownUntil = std::chrono::steady_clock::now() + kRespawnCooldown;
 
         _localState = PlayerState{ AcheronState::kNormal, false };
