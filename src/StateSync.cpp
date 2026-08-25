@@ -89,7 +89,7 @@ namespace AcheronTogether
             _worker.join();
         }
 
-        AcheronBridge::GetSingleton().SetConsequenceDisabled(false);
+        // Do not dispatch Papyrus while the VM may already be tearing down.
         STRPMClient::GetSingleton().Stop();
 
         _gameReady.store(false);
@@ -111,7 +111,8 @@ namespace AcheronTogether
 
     void StateSync::ResetSession()
     {
-        AcheronBridge::GetSingleton().SetConsequenceDisabled(false);
+        // kPreLoadGame fires while the Papyrus VM/object table is being rebuilt.
+        // Keep this reset purely native and defer Acheron Papyrus restoration until kPostLoadGame.
         _gameReady.store(false);
         _remoteStates.clear();
         _checkpointMarker = {};
@@ -150,6 +151,19 @@ namespace AcheronTogether
         _pendingCheckpointAt = {};
         _lastOutdoorCheckpoint = {};
         _gameReady.store(true);
+
+        // Run outside the SKSE kPostLoadGame callback, after the save's Papyrus state is restored.
+        if (auto* tasks = SKSE::GetTaskInterface()) {
+            tasks->AddTask([this]() {
+                if (_running.load() && _gameReady.load()) {
+                    AcheronBridge::GetSingleton().SetConsequenceDisabled(false);
+                    SKSE::log::info("ACHNET Acheron consequences restored after game load");
+                }
+            });
+        } else {
+            SKSE::log::warn("ACHNET unable to queue post-load consequence restoration");
+        }
+
         SKSE::log::info("ACHRESP game load complete; checkpoint tracking enabled");
     }
 
