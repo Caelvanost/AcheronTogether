@@ -32,6 +32,7 @@ namespace AcheronTogether
         bool EnsureCheckpointMarker(RE::PlayerCharacter* player);
         bool UpdateCheckpoint(RE::PlayerCharacter* player, std::string_view reason);
         void UpdateCheckpointTracking(RE::PlayerCharacter* player, const PlayerState& state, std::chrono::steady_clock::time_point now);
+        void HandleDebugHotkeys(RE::PlayerCharacter* player);
         void EvaluateRespawn(RE::PlayerCharacter* player, const PlayerState& state, std::chrono::steady_clock::time_point now);
         bool IsPartyWiped(const PlayerState& localState) const;
         bool RespawnLocal(RE::PlayerCharacter* player, std::string_view reason);
@@ -53,7 +54,10 @@ namespace AcheronTogether
         std::chrono::steady_clock::time_point _pendingCheckpointAt{};
         std::chrono::steady_clock::time_point _lastOutdoorCheckpoint{};
         bool _f5WasDown{ false };
+        bool _f6WasDown{ false };
+        bool _f7WasDown{ false };
 
+        bool _debugDeadOverride{ false };
         bool _deathObserved{ false };
         std::chrono::steady_clock::time_point _deathObservedAt{};
         bool _partyWipeObserved{ false };
