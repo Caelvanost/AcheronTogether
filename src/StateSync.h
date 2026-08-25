@@ -14,6 +14,7 @@ namespace AcheronTogether
         bool Start();
         void Stop();
         void ResetSession();
+        void OnGameLoaded();
 
         void OnGameSaved();
         void RequestCheckpoint();
@@ -52,11 +53,13 @@ namespace AcheronTogether
 
         std::jthread _worker;
         std::atomic_bool _running{ false };
+        std::atomic_bool _gameReady{ false };
 
         bool _haveLocalState{ false };
         PlayerState _localState{};
         std::uint64_t _localRevision{ 0 };
         std::chrono::steady_clock::time_point _lastHeartbeat{};
+        std::chrono::steady_clock::time_point _lastSendAttempt{};
         std::unordered_map<STRPMApi::ConnectionID, RemoteState> _remoteStates;
 
         RE::ObjectRefHandle _checkpointMarker{};
