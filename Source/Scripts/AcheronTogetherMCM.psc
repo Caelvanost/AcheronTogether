@@ -8,10 +8,12 @@ Int BOOL_NOTIFY = 4
 Int BOOL_TRUE_DEATH = 5
 Int BOOL_PARTY_WIPE = 6
 Int BOOL_DEBUG_HOTKEYS = 7
+Int BOOL_SOLO_DEFEAT = 8
 
 Int FLOAT_OUTDOOR_MINUTES = 0
 Int FLOAT_TRUE_DEATH_DELAY = 1
 Int FLOAT_PARTY_WIPE_DELAY = 2
+Int FLOAT_SOLO_DEFEAT_DELAY = 3
 
 Int oidSave = -1
 Int oidInterior = -1
@@ -23,8 +25,10 @@ Int oidCheckpointNow = -1
 
 Int oidTrueDeath = -1
 Int oidPartyWipe = -1
+Int oidSoloDefeat = -1
 Int oidTrueDeathDelay = -1
 Int oidPartyWipeDelay = -1
+Int oidSoloDefeatDelay = -1
 
 Int oidDebugHotkeys = -1
 Int oidSimDefeat = -1
@@ -39,7 +43,7 @@ Event OnConfigInit()
 EndEvent
 
 Int Function GetVersion()
-    Return 1
+    Return 2
 EndFunction
 
 Event OnPageReset(String page)
@@ -52,8 +56,10 @@ Event OnPageReset(String page)
     oidCheckpointNow = -1
     oidTrueDeath = -1
     oidPartyWipe = -1
+    oidSoloDefeat = -1
     oidTrueDeathDelay = -1
     oidPartyWipeDelay = -1
+    oidSoloDefeatDelay = -1
     oidDebugHotkeys = -1
     oidSimDefeat = -1
     oidSimDeath = -1
@@ -79,6 +85,10 @@ Event OnPageReset(String page)
         oidCheckpointNow = AddTextOption("Update checkpoint now", "Run")
 
     ElseIf page == "Respawn"
+        AddHeaderOption("Solo Defeat")
+        oidSoloDefeat = AddToggleOption("Respawn after solo Defeat", AcheronTogetherNative.GetBool(BOOL_SOLO_DEFEAT))
+        oidSoloDefeatDelay = AddSliderOption("Solo Defeat delay", AcheronTogetherNative.GetFloat(FLOAT_SOLO_DEFEAT_DELAY), "{1} s")
+
         AddHeaderOption("True death")
         oidTrueDeath = AddToggleOption("Individual true-death respawn", AcheronTogetherNative.GetBool(BOOL_TRUE_DEATH))
         oidTrueDeathDelay = AddSliderOption("True-death delay", AcheronTogetherNative.GetFloat(FLOAT_TRUE_DEATH_DELAY), "{2} s")
@@ -120,6 +130,10 @@ Event OnOptionSelect(Int option)
         value = !AcheronTogetherNative.GetBool(BOOL_NOTIFY)
         AcheronTogetherNative.SetBool(BOOL_NOTIFY, value)
         SetToggleOptionValue(option, value)
+    ElseIf option == oidSoloDefeat
+        value = !AcheronTogetherNative.GetBool(BOOL_SOLO_DEFEAT)
+        AcheronTogetherNative.SetBool(BOOL_SOLO_DEFEAT, value)
+        SetToggleOptionValue(option, value)
     ElseIf option == oidTrueDeath
         value = !AcheronTogetherNative.GetBool(BOOL_TRUE_DEATH)
         AcheronTogetherNative.SetBool(BOOL_TRUE_DEATH, value)
@@ -150,6 +164,11 @@ Event OnOptionSliderOpen(Int option)
         SetSliderDialogDefaultValue(5.0)
         SetSliderDialogRange(1.0, 60.0)
         SetSliderDialogInterval(1.0)
+    ElseIf option == oidSoloDefeatDelay
+        SetSliderDialogStartValue(AcheronTogetherNative.GetFloat(FLOAT_SOLO_DEFEAT_DELAY))
+        SetSliderDialogDefaultValue(30.0)
+        SetSliderDialogRange(1.0, 300.0)
+        SetSliderDialogInterval(5.0)
     ElseIf option == oidTrueDeathDelay
         SetSliderDialogStartValue(AcheronTogetherNative.GetFloat(FLOAT_TRUE_DEATH_DELAY))
         SetSliderDialogDefaultValue(1.5)
@@ -167,6 +186,9 @@ Event OnOptionSliderAccept(Int option, Float value)
     If option == oidOutdoorMinutes
         AcheronTogetherNative.SetFloat(FLOAT_OUTDOOR_MINUTES, value)
         SetSliderOptionValue(option, value, "{1} min")
+    ElseIf option == oidSoloDefeatDelay
+        AcheronTogetherNative.SetFloat(FLOAT_SOLO_DEFEAT_DELAY, value)
+        SetSliderOptionValue(option, value, "{1} s")
     ElseIf option == oidTrueDeathDelay
         AcheronTogetherNative.SetFloat(FLOAT_TRUE_DEATH_DELAY, value)
         SetSliderOptionValue(option, value, "{2} s")
@@ -187,6 +209,10 @@ Event OnOptionHighlight(Int option)
         SetInfoText("Creates an initial checkpoint after loading or starting a game.")
     ElseIf option == oidNotify
         SetInfoText("Shows 'Checkpoint updated.' only after the checkpoint marker was successfully moved.")
+    ElseIf option == oidSoloDefeat
+        SetInfoText("When no other STR player is present, a Defeated player automatically recovers at the checkpoint after the solo delay.")
+    ElseIf option == oidSoloDefeatDelay
+        SetInfoText("How long a solo Defeated state must persist before respawning. Rescue or true death cancels this timer.")
     ElseIf option == oidTrueDeath
         SetInfoText("A true Skyrim death can respawn the local player at the local checkpoint instead of relying on the normal death reload loop.")
     ElseIf option == oidPartyWipe
@@ -194,7 +220,7 @@ Event OnOptionHighlight(Int option)
     ElseIf option == oidDebugHotkeys
         SetInfoText("Development-only shortcuts. F6 simulates Defeated state and F7 simulates true death.")
     ElseIf option == oidSimDefeat
-        SetInfoText("Queues the same simulated Defeated state used by F6. Useful for deterministic two-client party-wipe tests.")
+        SetInfoText("Queues the same simulated Defeated state used by F6. With no other player present it exercises the solo Defeat timer.")
     ElseIf option == oidSimDeath
         SetInfoText("Queues the same simulated true-death state used by F7 to test individual respawn without needing a lethal killmove.")
     ElseIf option == oidCheckpointNow
