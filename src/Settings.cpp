@@ -55,13 +55,15 @@ namespace AcheronTogether
 
         _settings.individualTrueDeathRespawn = ReadBool("Respawn", "IndividualTrueDeath", true);
         _settings.partyWipeRespawn = ReadBool("Respawn", "PartyWipe", true);
+        _settings.soloDefeatRespawn = ReadBool("Respawn", "SoloDefeat", true);
         _settings.trueDeathDelaySeconds = std::clamp(ReadFloat("Respawn", "TrueDeathDelaySeconds", 1.5f), 0.25f, 10.0f);
         _settings.partyWipeDelaySeconds = std::clamp(ReadFloat("Respawn", "PartyWipeDelaySeconds", 1.25f), 0.25f, 10.0f);
+        _settings.soloDefeatDelaySeconds = std::clamp(ReadFloat("Respawn", "SoloDefeatDelaySeconds", 30.0f), 1.0f, 300.0f);
 
         _settings.debugHotkeys = ReadBool("Debug", "EnableHotkeys", true);
 
         SKSE::log::info(
-            "ACHCFG loaded save={} interior={} outdoor={} initial={} notify={} trueDeath={} partyWipe={} debug={}",
+            "ACHCFG loaded save={} interior={} outdoor={} initial={} notify={} trueDeath={} partyWipe={} soloDefeat={} debug={}",
             _settings.checkpointOnSave ? 1 : 0,
             _settings.checkpointOnInteriorTransition ? 1 : 0,
             _settings.periodicOutdoorCheckpoints ? 1 : 0,
@@ -69,6 +71,7 @@ namespace AcheronTogether
             _settings.showCheckpointNotification ? 1 : 0,
             _settings.individualTrueDeathRespawn ? 1 : 0,
             _settings.partyWipeRespawn ? 1 : 0,
+            _settings.soloDefeatRespawn ? 1 : 0,
             _settings.debugHotkeys ? 1 : 0);
     }
 
@@ -98,6 +101,7 @@ namespace AcheronTogether
         case BoolSetting::kIndividualTrueDeathRespawn: return s.individualTrueDeathRespawn;
         case BoolSetting::kPartyWipeRespawn: return s.partyWipeRespawn;
         case BoolSetting::kDebugHotkeys: return s.debugHotkeys;
+        case BoolSetting::kSoloDefeatRespawn: return s.soloDefeatRespawn;
         default: return false;
         }
     }
@@ -109,6 +113,7 @@ namespace AcheronTogether
         case FloatSetting::kOutdoorCheckpointMinutes: return s.outdoorCheckpointMinutes;
         case FloatSetting::kTrueDeathDelaySeconds: return s.trueDeathDelaySeconds;
         case FloatSetting::kPartyWipeDelaySeconds: return s.partyWipeDelaySeconds;
+        case FloatSetting::kSoloDefeatDelaySeconds: return s.soloDefeatDelaySeconds;
         default: return 0.0f;
         }
     }
@@ -126,6 +131,7 @@ namespace AcheronTogether
             case BoolSetting::kIndividualTrueDeathRespawn: _settings.individualTrueDeathRespawn = value; break;
             case BoolSetting::kPartyWipeRespawn: _settings.partyWipeRespawn = value; break;
             case BoolSetting::kDebugHotkeys: _settings.debugHotkeys = value; break;
+            case BoolSetting::kSoloDefeatRespawn: _settings.soloDefeatRespawn = value; break;
             default:
                 SKSE::log::warn("ACHCFG ignored unknown bool setting {}", setting);
                 return;
@@ -153,6 +159,10 @@ namespace AcheronTogether
                 _settings.partyWipeDelaySeconds = std::clamp(value, 0.25f, 10.0f);
                 stored = _settings.partyWipeDelaySeconds;
                 break;
+            case FloatSetting::kSoloDefeatDelaySeconds:
+                _settings.soloDefeatDelaySeconds = std::clamp(value, 1.0f, 300.0f);
+                stored = _settings.soloDefeatDelaySeconds;
+                break;
             default:
                 SKSE::log::warn("ACHCFG ignored unknown float setting {}", setting);
                 return;
@@ -173,8 +183,10 @@ namespace AcheronTogether
 
         WriteBool("Respawn", "IndividualTrueDeath", _settings.individualTrueDeathRespawn);
         WriteBool("Respawn", "PartyWipe", _settings.partyWipeRespawn);
+        WriteBool("Respawn", "SoloDefeat", _settings.soloDefeatRespawn);
         WriteFloat("Respawn", "TrueDeathDelaySeconds", _settings.trueDeathDelaySeconds);
         WriteFloat("Respawn", "PartyWipeDelaySeconds", _settings.partyWipeDelaySeconds);
+        WriteFloat("Respawn", "SoloDefeatDelaySeconds", _settings.soloDefeatDelaySeconds);
 
         WriteBool("Debug", "EnableHotkeys", _settings.debugHotkeys);
     }
